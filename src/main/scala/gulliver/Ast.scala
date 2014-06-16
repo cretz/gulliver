@@ -49,21 +49,17 @@ object Ast {
 
   // Type Annotations
 
-  case class TypeAnn(typ: Type, attributes: Seq[Attr])
+  case class TypeAnn(attrs: Seq[Attr], typ: Type)
 
   // Type Identifier
-
-  case class TypeId(
-    id: Id,
-    subType: Option[TypeId],
-    generics: Option[GenericArgClause]) extends Type
+  case class TypeId(id: Id, gen: Option[GenArgClause], sub: Option[TypeId]) extends Type
 
   // Tuple Type
 
   case class TupleType(elems: Seq[TupleTypeElem], varargs: Boolean) extends Type
   sealed trait TupleTypeElem
-  case class TupleTypeElemType(typ: Type, attrs: Seq[Attr], inout: Boolean) extends TupleTypeElem
-  case class TupleTypeElemName(id: Id, ann: TypeAnn, inout: Boolean) extends TupleTypeElem
+  case class TupleTypeElemType(attrs: Seq[Attr], inout: Boolean, typ: Type) extends TupleTypeElem
+  case class TupleTypeElemName(inout: Boolean, id: Id, ann: TypeAnn) extends TupleTypeElem
 
   // Function Type
 
@@ -100,7 +96,7 @@ object Ast {
   // Prefix Expressions
 
   sealed trait PreExpr
-  case class PreExprOper(expr: PostExpr, oper: Option[Oper]) extends PreExpr
+  case class PreExprOper(oper: Option[Oper], expr: PostExpr) extends PreExpr
   case class PreExprInOut(id: Id) extends PreExpr
 
   // Binary Expressions
@@ -113,18 +109,24 @@ object Ast {
   case class CondOper(expr: Expr)
   sealed trait TypeCastOper
   case class TypeCastOperIs(typ: Type) extends TypeCastOper
-  case class TypeCastOperAs(typ: Type, option: Boolean) extends TypeCastOper
+  case class TypeCastOperAs(option: Boolean, typ: Type) extends TypeCastOper
 
   // Primary Expressions
 
   sealed trait PrimExpr
-  case class PrimExprId(id: Id, generics: Option[GenericArgClause]) extends PrimExpr
+  case class PrimExprId(id: Id, generics: Option[GenArgClause]) extends PrimExpr
 
   sealed trait LitExpr extends PrimExpr
   case class LitExprLit(lit: Lit) extends LitExpr
   case class LitExprArray(lit: ArrayLit) extends LitExpr
   case class LitExprDict(lit: DictLit) extends LitExpr
-  case class LitExprSpecial(value: String) extends LitExpr
+  sealed trait LitExprSpecial extends LitExpr
+  object LitExprSpecial extends EnumObj[LitExprSpecial] {
+    case object File extends EnumVal("__FILE__") with LitExprSpecial
+    case object Line extends EnumVal("__LINE__") with LitExprSpecial
+    case object Column extends EnumVal("__COLUMN__") with LitExprSpecial
+    case object Function extends EnumVal("__FUNCTION__") with LitExprSpecial
+  }
   case class ArrayLit(exprs: Seq[Expr])
   case class DictLit(exprs: Seq[(Expr, Expr)])
 
@@ -140,8 +142,16 @@ object Ast {
   case object SuperExprInit extends SuperExpr
 
   case class ClosureExpr(sig: Option[ClosureSig], stmts: Seq[Stmt]) extends PrimExpr
-  case class ClosureSig(params: Seq[Param], ids: Seq[Id], res: Option[FuncResult], capList: Option[CaptureList])
-  case class CaptureList(spec: String, expr: Expr)
+  case class ClosureSig(params: Option[ParamClause], ids: Seq[Id],
+    res: Option[FuncResult], capList: Option[CaptureList])
+  case class CaptureList(spec: CaptureSpec, expr: Expr)
+  sealed trait CaptureSpec
+  object CaptureSpec extends EnumObj[CaptureSpec] {
+    case object Weak extends EnumVal("weak") with CaptureSpec
+    case object Unowned extends EnumVal("unowned") with CaptureSpec
+    case object UnownedSafe extends EnumVal("unowned(safe)") with CaptureSpec
+    case object UnownedUnsafe extends EnumVal("unowned(unsafe)") with CaptureSpec
+  }
 
   case class ImplicitMemberExpr(id: Id) extends PrimExpr
 
@@ -166,7 +176,7 @@ object Ast {
 
   sealed trait ExplicitMemberExpr extends PostExpr
   case class ExplicitMemberExprDigit(expr: PostExpr, digit: Char) extends ExplicitMemberExpr
-  case class ExplicitMemberExprId(expr: PostExpr, id: Id, generics: Option[GenericArgClause]) extends ExplicitMemberExpr
+  case class ExplicitMemberExprId(expr: PostExpr, id: Id, generics: Option[GenArgClause]) extends ExplicitMemberExpr
 
   case class PostSelfExpr(expr: PostExpr) extends PostExpr
 
@@ -193,7 +203,7 @@ object Ast {
   case class ForInitDecl(decl: VarDecl) extends ForInit
   case class ForInitExpr(exprs: Seq[Expr]) extends ForInit
 
-  case class ForInStmt(pat: Pattern, expr: Expr, stmts: Seq[Stmt]) extends LoopStmt
+  case class ForInStmt(pat: Patt, expr: Expr, stmts: Seq[Stmt]) extends LoopStmt
 
   case class WhileStmt(cond: WhileCond, stmts: Seq[Stmt]) extends LoopStmt
   sealed trait WhileCond
@@ -219,7 +229,7 @@ object Ast {
   sealed trait SwitchLabel
   case class CaseLabel(items: Seq[CaseItem]) extends SwitchLabel
   case object DefaultLabel extends SwitchLabel
-  case class CaseItem(pattern: Pattern, guard: Option[Expr])
+  case class CaseItem(pattern: Patt, guard: Option[Expr])
 
   // Labeled Statement
 
@@ -239,12 +249,229 @@ object Ast {
 
   case class ReturnStmt(expr: Option[Expr]) extends ControlXferStmt
 
-  // Future
-  case class Pattern()
-  case class VarDecl()
-  case class Decl()
-  case class FuncResult()
-  case class Param()
-  case class Attr()
-  case class GenericArgClause()
+  /// Declarations ///
+
+  sealed trait Decl
+  sealed trait DeclSpec
+  object DeclSpec extends EnumObj[DeclSpec] {
+    case object Class extends EnumVal("class") with DeclSpec
+    case object Mut extends EnumVal("mutating") with DeclSpec
+    case object NonMut extends EnumVal("nonmutating") with DeclSpec
+    case object Override extends EnumVal("override") with DeclSpec
+    case object Static extends EnumVal("static") with DeclSpec
+    case object Unowned extends EnumVal("unowned") with DeclSpec
+    case object UnownedSafe extends EnumVal("unowned(safe)") with DeclSpec
+    case object UnownedUnsafe extends EnumVal("unowned(unsafe)") with DeclSpec
+    case object Weak extends EnumVal("weak") with DeclSpec
+  }
+
+  // Module Scope
+
+  case class TopLevelDecl(stmts: Seq[Stmt]) extends Decl
+
+  // Import Declaration
+
+  case class ImportDecl(attrs: Seq[Attr], kind: Option[ImportKind], path: ImportPath) extends Decl
+  sealed trait ImportKind
+  object ImportKind extends EnumObj[ImportKind] {
+    case object TypeAlias extends EnumVal("typealias") with ImportKind
+    case object Struct extends EnumVal("struct") with ImportKind
+    case object Class extends EnumVal("class") with ImportKind
+    case object Enum extends EnumVal("enum") with ImportKind
+    case object Protocol extends EnumVal("protocol") with ImportKind
+    case object Var extends EnumVal("var") with ImportKind
+    case object Func extends EnumVal("func") with ImportKind
+  }
+  case class ImportPath(pathId: ImportPathId, sub: Option[ImportPath])
+  sealed trait ImportPathId
+  case class ImportPathIdId(id: Id) extends ImportPathId
+  case class ImportPathIdOper(oper: Oper) extends ImportPathId
+
+  // Constant Declaration
+
+  case class ConstDecl(attrs: Seq[Attr], specs: Seq[DeclSpec], exprs: Seq[PatternInit]) extends Decl
+  case class PatternInit(patt: Patt, init: Option[Expr])
+
+  // Variable Declaration
+
+  sealed trait VarDecl extends Decl
+  case class VarDeclPattern(head: VarDeclHead, exprs: Seq[PatternInit]) extends VarDecl
+  case class VarDeclCode(head: VarDeclHead, id: Id, typeAnn: TypeAnn, stmts: Seq[Stmt]) extends VarDecl
+  case class VarDeclGetSet(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetBlock) extends VarDecl
+  case class VarDeclGetSetKey(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetKeyBlock) extends VarDecl
+  case class VarDeclWillDidSet(head: VarDeclHead, id: Id, typeAnn: TypeAnn,
+    expr: Option[Expr], block: WillDidSetBlock) extends VarDecl
+  case class VarDeclHead(attrs: Seq[Attr], specs: Seq[DeclSpec])
+  case class GetSetBlock(get: GetClause, set: Option[SetClause])
+  case class GetClause(attrs: Seq[Attr], stmts: Seq[Stmt])
+  case class SetClause(attrs: Seq[Attr], id: Option[Id], stmts: Seq[Stmt])
+  case class GetSetKeyBlock(getKeys: GetSetKeyClause, setKeys: Option[GetSetKeyClause])
+  case class GetSetKeyClause(attrs: Seq[Attr])
+  case class WillDidSetBlock(will: WillDidSetClause, did: Option[WillDidSetClause])
+  case class WillDidSetClause(attrs: Seq[Attr], id: Option[Id], stmts: Seq[Stmt])
+
+  // Type Alias Declaration
+
+  case class TypeAliasDecl(id: Id, typ: Type) extends Decl
+
+  // Function Declaration
+
+  case class FuncDecl(head: FuncHead, name: FuncName, gen: Option[GenParamClause],
+    sig: FuncSig, stmts: Seq[Stmt]) extends Decl
+  case class FuncHead(attrs: Seq[Attr], specs: Seq[DeclSpec])
+  sealed trait FuncName
+  case class FuncNameId(id: Id) extends FuncName
+  case class FuncNameOper(oper: Oper) extends FuncName
+  case class FuncSig(paramClauses: Seq[ParamClause], res: Option[FuncResult])
+  case class FuncResult(attrs: Seq[Attr], typ: Type)
+  case class ParamClause(params: Seq[Param], vararg: Boolean)
+  sealed trait Param
+  case class ParamNorm(inout: Boolean, isVar: Boolean, hash: Boolean,
+    name: ParamName, localName: Option[ParamName], typeAnn: TypeAnn, default: Option[Expr]) extends Param
+  case class ParamAttr(attrs: Seq[Attr], typ: Type) extends Param
+  sealed trait ParamName
+  case class ParamNameId(id: Id) extends ParamName
+  case object ParamNameIgnore extends ParamName
+
+  // Enumeration Declaration
+
+  case class EnumDecl(attrs: Seq[Attr], enum: Enum) extends Decl
+  case class Enum(id: Id, gen: Option[GenParamClause], members: Seq[EnumMember], typeId: Option[TypeId])
+  sealed trait EnumMember
+  case class EnumMemberDecl(decl: Decl) extends EnumMember
+  case class EnumMemberCase(clause: EnumCaseClause) extends EnumMember
+  case class EnumCaseClause(attrs: Seq[Attr], cases: Seq[EnumCase])
+  sealed trait EnumCase
+  case class UnionEnumCase(id: Id, typ: Option[TupleType]) extends EnumCase
+  case class RawValEnumCase(id: Id, lit: Option[Lit]) extends EnumCase
+
+  // Structure Declaration
+
+  case class StructDecl(attrs: Seq[Attr], id: Id, gen: Option[GenParamClause],
+    inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
+
+  // Class Declaration
+
+  case class ClassDecl(attrs: Seq[Attr], id: Id, gen: Option[GenParamClause],
+    inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
+
+  // Protocol Declaration
+
+  case class ProtoDecl(attrs: Seq[Attr], id: Id, inherit: Seq[TypeId], members: Seq[ProtoMember]) extends Decl
+  sealed trait ProtoMember
+  case class ProtoProp(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetKeyBlock) extends ProtoMember
+  case class ProtoMeth(head: FuncHead, name: FuncName, gen: Option[GenParamClause], sig: FuncSig) extends ProtoMember
+  case class ProtoInit(head: InitHead, gen: Option[GenParamClause], params: ParamClause) extends ProtoMember
+  case class ProtoSub(head: SubHead, res: SubResult, block: GetSetKeyBlock) extends ProtoMember
+  case class ProtoAssocType(id: Id, inherit: Seq[TypeId], value: Option[Type]) extends ProtoMember
+
+  // Initializer Declaration
+
+  case class InitDecl(head: InitHead, gen: Option[GenParamClause], param: ParamClause, stmts: Seq[Stmt]) extends Decl
+  case class InitHead(attrs: Seq[Attr], conv: Boolean)
+
+  // Deinitializer Declaration
+
+  case class DeinitDecl(attrs: Seq[Attr], stmts: Seq[Stmt]) extends Decl
+
+  // Extension Declaration
+
+  case class ExtDecl(typeId: TypeId, inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
+
+  // Subscript Declaration
+
+  sealed trait SubDecl extends Decl
+  case class SubDeclCode(head: SubHead, res: SubResult, stmts: Seq[Stmt]) extends SubDecl
+  case class SubDeclGetSet(head: SubHead, res: SubResult, block: GetSetBlock) extends SubDecl
+  case class SubDeclGetSetKey(head: SubHead, res: SubResult, block: GetSetKeyBlock) extends SubDecl
+  case class SubHead(attrs: Seq[Attr], param: ParamClause)
+  case class SubResult(attrs: Seq[Attr], typ: Type)
+
+  // Operator Declaration
+
+  sealed trait OperDecl extends Decl
+  case class PreOperDecl(oper: Oper) extends OperDecl
+  case class PostOperDecl(oper: Oper) extends OperDecl
+  case class InfixOperDecl(oper: Oper, attrs: Option[InfixOperAttrs]) extends OperDecl
+  case class InfixOperAttrs(prec: Option[Short], assoc: Option[Assoc])
+  sealed trait Assoc
+  object Assoc extends EnumObj[Assoc] {
+    case object Left extends EnumVal("left") with Assoc
+    case object Right extends EnumVal("right") with Assoc
+    case object None extends EnumVal("none") with Assoc
+  }
+
+  /// Attributes ///
+
+  case class Attr(id: Id, args: Option[String])
+
+  /// Patterns
+
+  sealed trait Patt
+
+  // Wildcard Pattern
+
+  case class WildPatt(typeAnn: Option[TypeAnn] = None) extends Patt
+
+  // Identifier Pattern
+
+  case class IdPatt(id: Id, typeAnn: Option[TypeAnn] = None) extends Patt
+
+  // Value-Binding Pattern
+
+  sealed trait ValPatt extends Patt
+  case class ValPattVar(patt: Patt) extends ValPatt
+  case class ValPattLet(patt: Patt) extends ValPatt
+
+  // Tuple Pattern
+
+  case class TuplePatt(patts: Seq[Patt], typeAnn: Option[TypeAnn] = None) extends Patt
+
+  // Enumeration Case Pattern
+
+  case class EnumCasePatt(typeId: Option[TypeId], id: Id, tuple: Option[TuplePatt]) extends Patt
+
+  // Type-Casting Pattern
+
+  sealed trait TypeCastPatt extends Patt
+  case class TypeCastPattIs(typ: Type) extends TypeCastPatt
+  case class TypeCastPattAs(patt: Patt, typ: Type) extends TypeCastPatt
+
+  // Expression Pattern
+
+  case class ExprPatt(expr: Expr) extends Patt
+
+  /// Generic Parameters and Arguments ///
+
+  // Generic Parameter Clause
+
+  case class GenParamClause(params: Seq[GenParam], reqs: Seq[Req])
+  sealed trait GenParam
+  case class GenParamPlain(id: Id) extends GenParam
+  case class GenParamType(id: Id, typeId: TypeId) extends GenParam
+  case class GenParamProto(id: Id, proto: ProtoCompType) extends GenParam
+  sealed trait Req
+  sealed trait ConfReq extends Req
+  case class ConfReqType(left: TypeId, right: TypeId) extends ConfReq
+  case class ConfReqProto(left: TypeId, right: ProtoCompType) extends ConfReq
+  case class SameReq(left: TypeId, right: Type) extends Req
+
+  // Generic Argument Clause
+
+  case class GenArgClause(types: Seq[Type])
+
+  // Helpers
+
+  trait EnumObj[T] {
+    var _vals = Map.empty[String, EnumVal with T]
+    def vals = _vals
+    var _enums = Map.empty[EnumVal with T, String]
+    def enums = _enums
+
+    abstract class EnumVal(val name: String) { this: T =>
+      _vals += (name -> this)
+      _enums += (this -> name)
+      override def toString(): String = name
+    }
+  }
 }
