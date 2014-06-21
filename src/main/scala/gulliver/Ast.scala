@@ -1,5 +1,7 @@
 package gulliver
 
+import scala.language.implicitConversions
+
 object Ast {
   // Please keep in order of spec
 
@@ -14,6 +16,7 @@ object Ast {
   // Identifiers
 
   case class Id(name: String)
+  implicit def stringToId(name: String): Id = Id(name)
 
   // Literals
   // TODO: turn constructors into object applys, and resolve actual number and pass to case class
@@ -28,8 +31,8 @@ object Ast {
   case class HexLit(value: String) extends IntLit
 
   sealed trait FloatLit extends Lit
-  case class DecimalFloat(value: String) extends FloatLit
-  case class HexFloat(value: String) extends FloatLit
+  case class DecimalFloat(value: String, frac: Option[String], exp: Option[String]) extends FloatLit
+  case class HexFloat(value: String, frac: Option[String], exp: Option[String]) extends FloatLit
 
   case class StringLit(items: Seq[TextItem]) extends Lit
   sealed trait TextItem
@@ -42,6 +45,7 @@ object Ast {
   // Operators
 
   case class Oper(value: String)
+  implicit def stringToOper(value: String): Oper = Oper(value)
 
   /// Types ///
 
@@ -52,7 +56,9 @@ object Ast {
   case class TypeAnn(attrs: Seq[Attr], typ: Type)
 
   // Type Identifier
-  case class TypeId(id: Id, gen: Option[GenArgClause], sub: Option[TypeId]) extends Type
+  case class TypeId(id: Id, gen: Option[GenArgClause] = None, sub: Option[TypeId] = None) extends Type
+  val TypeTmp = TypeId(Id("__placeholder__"))
+  implicit def stringToTypeId(id: String): TypeId = TypeId(id)
 
   // Tuple Type
 
@@ -63,13 +69,11 @@ object Ast {
 
   // Function Type
 
-  case class FuncType(param: Type, ret: Type) extends Type
+  case class FuncType(ret: Type, param: Type) extends Type
 
   // Array Type
 
-  sealed trait ArrayType extends Type
-  case class ArrayTypeSingle(typ: Type) extends ArrayType
-  case class ArrayTypeNested(child: ArrayType) extends ArrayType
+  case class ArrayType(typ: Type, dimCount: Int) extends Type
 
   // Optional Type
 
@@ -91,13 +95,15 @@ object Ast {
 
   /// Expressions ///
 
-  case class Expr(pre: PreExpr, exprs: Seq[BinExpr])
+  case class Expr(pre: PreExpr, exprs: Seq[BinExpr] = Seq.empty)
+  implicit def stringToExpr(id: String): Expr = Expr(id)
 
   // Prefix Expressions
 
   sealed trait PreExpr
   case class PreExprOper(oper: Option[Oper], expr: PostExpr) extends PreExpr
   case class PreExprInOut(id: Id) extends PreExpr
+  implicit def stringToPreExprOper(prim: String): PreExprOper = PreExprOper(None, prim)
 
   // Binary Expressions
 
@@ -114,7 +120,8 @@ object Ast {
   // Primary Expressions
 
   sealed trait PrimExpr
-  case class PrimExprId(id: Id, generics: Option[GenArgClause]) extends PrimExpr
+  case class PrimExprId(id: Id, generics: Option[GenArgClause] = None) extends PrimExpr
+  implicit def stringToPrimExprId(id: String): PrimExprId = PrimExprId(id)
 
   sealed trait LitExpr extends PrimExpr
   case class LitExprLit(lit: Lit) extends LitExpr
@@ -167,6 +174,7 @@ object Ast {
   sealed trait PostExpr
   case class PostExprPrim(expr: PrimExpr) extends PostExpr
   case class PostExprOper(expr: PostExpr, oper: Oper) extends PostExpr
+  implicit def stringToPostExprPrim(prim: String): PostExprPrim = PostExprPrim(prim)
 
   sealed trait FuncCallExpr extends PostExpr
   case class FuncCallExprPlain(expr: PostExpr, params: ParenExpr) extends FuncCallExpr

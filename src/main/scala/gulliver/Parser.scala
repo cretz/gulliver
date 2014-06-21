@@ -4,9 +4,8 @@ import org.parboiled2._
 import Ast._
 import scala.language.implicitConversions
 
-class SwiftParser(val input: ParserInput) extends Parser {
-  // Great care has been taken to follow the spec exactly, all the way down to
-  //  newlines between the def's here. Please respect it.
+class Parser(val input: ParserInput) extends org.parboiled2.Parser {
+  // Try to stay in order with the spec
 
   /// Lexical Structure ///
 
@@ -14,13 +13,14 @@ class SwiftParser(val input: ParserInput) extends Parser {
 
   val wsChar = CharPredicate(" \r\n\t\13\f\0")
   def ws = rule { zeroOrMore(wsChar) }
-  def wsSafe(c: Char): Rule0 = rule { c ~ ws }
+//  def wsSafe(c: Char): Rule0 = rule { c ~ ws }
   def eol = rule { CharPredicate("\r\n") | "\r\n" }
+  implicit def wsStr(s: String): Rule0 = rule { str(s) ~ ws }
 
-  def singleLineComment = rule { "//" ~ capture(zeroOrMore(!eol ~ ANY)) ~> (SingleLineComment(_)) }
-  def multilineCommentChars = rule { capture(oneOrMore(!"/*" ~ !"*/" ~ ANY)) }
+  def singleLineComment = rule { str("//") ~ capture(zeroOrMore(!eol ~ ANY)) ~> (SingleLineComment(_)) }
+  def multilineCommentChars = rule { capture(oneOrMore(!str("/*") ~ !str("*/") ~ ANY)) }
   def multilineCommentBody: Rule1[String] = rule {
-    "/*" ~ oneOrMore(multilineCommentBody | multilineCommentChars) ~ "*/" ~>
+    str("/*") ~ oneOrMore(multilineCommentBody | multilineCommentChars) ~ str("*/") ~>
       ("/*" + (_: Seq[String]).mkString + "*/")
   }
   def multilineComment = rule {
@@ -30,11 +30,11 @@ class SwiftParser(val input: ParserInput) extends Parser {
   // Identifiers
 
   def identifier = rule {
-    (identifierNormal | identifierEscaped | implicitParamName) ~> (Id(_))
+    (identifierNormal | identifierEscaped | implicitParameterName) ~> (Id(_))
   }
   def identifierNormal = rule { capture(identifierHead ~ identifierChars) }
   def identifierEscaped = rule { '`' ~ capture(identifierHead ~ identifierChars) ~ '`' }
-  def identifierList = rule { oneOrMore(identifier).separatedBy(wsSafe(',')) }
+  def identifierList = rule { oneOrMore(identifier).separatedBy(",") }
   val identifierHead = CharPredicate(
     CharPredicate.Alpha, '_',
     "\u00a8\u00aa\u00ad\u00af", '\u00b2' to '\u00b5', '\u00b7' to '\u00ba',
@@ -55,38 +55,38 @@ class SwiftParser(val input: ParserInput) extends Parser {
     identifierHead
   )
   def identifierChars = rule { oneOrMore(predicate(identifierChar)) }
-  def implicitParamName = rule { capture('$' ~ decimalDigits) }
+  def implicitParameterName = rule { capture('$' ~ decimalDigits) }
 
   // Literals
 
-  def literal: Rule1[Lit] = rule { integerLiteral | floatLiteral | stringLiteral }
+  def literal: Rule1[Lit] = rule { floatLiteral | integerLiteral | stringLiteral }
 
   // Integer Literals
 
   def integerLiteral: Rule1[IntLit] = rule {
-    capture(binaryLiteral) ~> (BinaryLit(_)) |
-    capture(octalLiteral) ~> (OctalLit(_)) |
-    capture(decimalLiteral) ~> (DecimalLit(_)) |
-    capture(hexLiteral) ~> (HexLit(_))
+    capture(optional('-') ~ binaryLiteral) ~> (BinaryLit(_)) |
+    capture(optional('-') ~ octalLiteral) ~> (OctalLit(_)) |
+    capture(optional('-') ~ hexLiteral) ~> (HexLit(_)) |
+    capture(optional('-') ~ decimalLiteral) ~> (DecimalLit(_))
   }
 
-  def binaryLiteral = rule { "0b" ~ binaryDigit ~ binaryLiteralChars }
+  def binaryLiteral = rule { "0b" ~ binaryLiteralChars }
   val binaryDigit = CharPredicate('0', '1')
   def binaryLiteralChar = rule { binaryDigit | '_' }
   def binaryLiteralChars = rule { oneOrMore(binaryLiteralChar) }
 
-  def octalLiteral = rule { "0o" ~ octalDigit ~ octalLiteralChars }
+  def octalLiteral = rule { "0o" ~ octalLiteralChars }
   val octalDigit = CharPredicate('0' to '7')
   def octalLiteralChar = rule { octalDigit | '_' }
   def octalLiteralChars = rule { oneOrMore(octalLiteralChar) }
 
-  def decimalLiteral = rule { decimalDigit ~ decimalLiteralChars }
+  def decimalLiteral = rule { decimalLiteralChars }
   val decimalDigit = CharPredicate.Digit
   def decimalDigits = rule { oneOrMore(decimalDigit) }
   def decimalLiteralChar = rule { decimalDigit | '_' }
   def decimalLiteralChars = rule { oneOrMore(decimalLiteralChar) }
 
-  def hexLiteral = rule { "0x" ~ hexDigit ~ hexLiteralChars }
+  def hexLiteral = rule { "0x" ~ hexLiteralChars }
   val hexDigit = CharPredicate.HexDigit
   def hexLiteralChar = rule { hexDigit | '_' }
   def hexLiteralChars = rule { oneOrMore(hexLiteralChar) }
@@ -94,8 +94,18 @@ class SwiftParser(val input: ParserInput) extends Parser {
   // Floating-Point Literals
 
   def floatLiteral: Rule1[FloatLit] = rule {
-    capture(decimalLiteral ~ optional(decimalFraction) ~ optional(decimalExponent)) ~> (DecimalFloat(_)) |
-    capture(hexLiteral ~ optional(hexFraction) ~ optional(hexExponent)) ~> (HexFloat(_))
+    capture(optional('-') ~ hexLiteral) ~ capture(hexFraction) ~ optional(capture(hexExponent)) ~> (
+      (v, f, e) => HexFloat(v, Some(f), e)
+    ) |
+    capture(optional('-') ~ hexLiteral) ~ capture(hexExponent) ~> (
+      (v, e) => HexFloat(v, None, Some(e))
+    ) |
+    capture(optional('-') ~ decimalLiteral) ~ capture(decimalFraction) ~ optional(capture(decimalExponent)) ~> (
+      (v, f, e) => DecimalFloat(v, Some(f), e)
+    ) |
+    capture(optional('-') ~ decimalLiteral) ~ capture(decimalExponent) ~> (
+      (v: String, e: String) => DecimalFloat(v, None, Some(e))
+    )
   }
 
   def decimalFraction = rule { '.' ~ optional(decimalLiteral) }
@@ -128,32 +138,57 @@ class SwiftParser(val input: ParserInput) extends Parser {
 
   def operator = rule { capture(oneOrMore(operatorChar)) ~> (Oper(_))}
   val operatorChar = CharPredicate('/', '=', '-', '+', '!', '*', '%', '<', '>', '&', '|', '^', '~', '.')
-  def binaryOperator = operator
+  def binaryOperator = rule { operator ~ ws }
   def prefixOperator = operator
-  def postfixOperator = operator
+  def postfixOperator = rule { operator ~ ws }
 
   /// Types ///
 
+  def typBase: Rule1[Type] = rule {
+    protocolCompositionType | typeIdentifier | tupleType
+  }
+
   def typ: Rule1[Type] = rule {
-    arrayType | functionType | typeIdentifier | tupleType | optionalType |
-      implicitlyUnwrappedOptionalType | protocolCompositionType | metatypeType
+    typBase ~ ws ~
+    zeroOrMore(
+      (oneOrMore(capture("[") ~ "]") ~> ((s: Seq[String]) => ArrayType(TypeTmp, s.size))) |
+      ("->" ~ typ ~> (FuncType(TypeTmp, _))) |
+      ('?' ~ push(OptType(TypeTmp))) |
+      ('!' ~ push(ImplicitOptType(TypeTmp))) |
+      ("." ~ "Type" ~ push(MetaTypeType(TypeTmp))) |
+      ("." ~ "Protocol" ~ push(MetaTypeProto(TypeTmp)))
+    ) ~> (
+      (base: Type, right: Seq[Type]) =>
+        right.foldLeft(base) { (left: Type, right: Type) =>
+          right match {
+            case r: ArrayType => r.copy(typ = left)
+            case r: FuncType => r.copy(ret = left)
+            case r: OptType => r.copy(typ = left)
+            case r: ImplicitOptType => r.copy(typ = left)
+            case r: MetaTypeType => r.copy(typ = left)
+            case r: MetaTypeProto => r.copy(typ = left)
+            case _ => ???
+          }
+        }
+    )
   }
 
   // Type Annotation
 
-  def typeAnnotation = rule {optional(attributes) ~ typ ~> (TypeAnn(_, _)) }
+  def typeAnnotation = rule { ":" ~ optional(attributes) ~ typ ~> (TypeAnn(_, _)) }
 
   // Type Identifier
 
   def typeIdentifier: Rule1[TypeId] = rule {
-    typeName ~ optional(genericArgumentClause) ~ optional('.' ~ typeIdentifier) ~> (TypeId(_, _, _))
+    typeName ~ optional(genericArgumentClause) ~
+      optional("." ~ !"Type" ~ !"Protocol" ~ typeIdentifier) ~> (TypeId(_, _, _))
   }
   def typeName = identifier
 
   // Tuple Types
 
   def tupleType = rule {
-    '(' ~ optional(tupleTypeBody) ~ ')' ~> (
+    "(" ~ optional(tupleTypeBody) ~ ")" ~> (
       _ match {
         case None => TupleType(Seq.empty, false)
         case Some((elements, varargs)) => TupleType(elements, varargs)
@@ -165,58 +200,32 @@ class SwiftParser(val input: ParserInput) extends Parser {
       (elems: Seq[TupleTypeElem], varargs: Option[String]) => elems -> varargs.isDefined
     )
   }
-  def tupleTypeElementList = rule { oneOrMore(tupleTypeElement) }
+  def tupleTypeElementList = rule { oneOrMore(tupleTypeElement).separatedBy(",") }
   def tupleTypeElement: Rule1[TupleTypeElem] = rule {
-    optional(attributes) ~ optional(capture("inout")) ~ typ ~> (TupleTypeElemType(_, _, _)) |
-    optional(capture("inout")) ~ elementName ~ typeAnnotation ~> (
-      TupleTypeElemName(_: Option[String], _: Id, _: TypeAnn)
+    optional(capture("inout")) ~ elementName ~ typeAnnotation ~> (TupleTypeElemName(_, _, _)) |
+    optional(attributes) ~ optional(capture("inout")) ~ typ ~> (
+      (a: Option[Seq[Attr]], i: Option[String], t: Type) => TupleTypeElemType(a, i, t)
     )
   }
   def elementName = identifier
-
-  // Function Type
-
-  def functionType = rule { typ ~ "->" ~ typ ~> (FuncType(_, _)) }
-
-  // Array Type
-
-  def arrayType: Rule1[ArrayType] = rule {
-    arrayType ~ "[]" ~> (ArrayTypeNested(_)) |
-    typ ~ "[]" ~> (ArrayTypeSingle(_))
-  }
-
-  // Optional Type
-
-  def optionalType = rule { typ ~ '?' ~> (OptType(_)) }
-
-  // Implicitly Unwrapped Optional Type
-
-  def implicitlyUnwrappedOptionalType = rule { typ ~ '!' ~> (ImplicitOptType(_)) }
 
   // Protocol Composition Type
 
   def protocolCompositionType = rule {
     "protocol" ~ "<" ~ optional(protocolIdentifierList) ~ ">" ~> (ProtoCompType(_))
   }
-  def protocolIdentifierList = rule { oneOrMore(protocolIdentifier).separatedBy(wsSafe(',')) }
+  def protocolIdentifierList = rule { oneOrMore(protocolIdentifier).separatedBy(",") }
   def protocolIdentifier = typeIdentifier
-
-  // Metatype Type
-
-  def metatypeType: Rule1[MetaType] = rule {
-    typ ~ '.' ~ "Type" ~> (MetaTypeType(_)) |
-    typ ~ '.' ~ "Protocol" ~> (MetaTypeProto(_))
-  }
 
   // Type Inheritance Clause
 
   def typeInheritanceClause = rule { ':' ~ typeInheritanceList }
-  def typeInheritanceList = rule { oneOrMore(typeIdentifier).separatedBy(wsSafe(',')) }
+  def typeInheritanceList = rule { oneOrMore(typeIdentifier).separatedBy(",") }
 
   /// Expressions ///
 
   def expression = rule { prefixExpression ~ optional(binaryExpressions) ~> (Expr(_, _)) }
-  def expressionList = rule { oneOrMore(expression).separatedBy(wsSafe(',')) }
+  def expressionList = rule { oneOrMore(expression).separatedBy(",") }
 
   // Prefix Expressions
 
@@ -230,7 +239,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
 
   def binaryExpression: Rule1[BinExpr] = rule {
     binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
-    assignmentOperator ~ prefixExpression ~> (BinExprAssign(_)) |
+    assignmentOperator ~ ws ~ prefixExpression ~> (BinExprAssign(_)) |
     conditionalOperator ~ prefixExpression ~> (BinExprCond(_, _)) |
     typeCastingOperator ~> (BinExprCast(_))
   }
@@ -238,19 +247,19 @@ class SwiftParser(val input: ParserInput) extends Parser {
 
   val assignmentOperator = CharPredicate('=')
 
-  def conditionalOperator = rule { '?' ~ expression ~ ':' ~> (CondOper(_)) }
+  def conditionalOperator = rule { "?" ~ expression ~ ":" ~> (CondOper(_)) }
 
   def typeCastingOperator: Rule1[TypeCastOper] = rule {
     "is" ~ typ ~> (TypeCastOperIs(_)) |
-    "as" ~ optional(capture('?')) ~ typ ~> (TypeCastOperAs(_: Option[String], _: Type))
+    "as" ~ optional(capture("?")) ~ typ ~> (TypeCastOperAs(_: Option[String], _: Type))
   }
 
   // Primary Expressions
 
   def primaryExpression: Rule1[PrimExpr] = rule {
-    identifier ~ optional(genericArgumentClause) ~> (PrimExprId(_, _)) |
     literalExpression | selfExpression | superclassExpression | closureExpression |
-    parenthesizedExpression | implicitMemberExpression | wildcardExpression
+    parenthesizedExpression | implicitMemberExpression | wildcardExpression |
+    identifier ~ ws ~ optional(genericArgumentClause) ~> (PrimExprId(_, _))
   }
 
   def literalExpression: Rule1[LitExpr] = rule {
@@ -259,31 +268,31 @@ class SwiftParser(val input: ParserInput) extends Parser {
     dictionaryLiteral ~> (LitExprDict(_)) |
     valueMap(LitExprSpecial.vals)
   }
-  def arrayLiteral = rule { '[' ~ optional(arrayLiteralItems) ~ ']' ~> (ArrayLit(_)) }
-  def arrayLiteralItems = rule { oneOrMore(arrayLiteralItem).separatedBy(wsSafe(',')) ~ optional(',') }
+  def arrayLiteral = rule { "[" ~ optional(arrayLiteralItems) ~ "]" ~> (ArrayLit(_)) }
+  def arrayLiteralItems = rule { oneOrMore(arrayLiteralItem).separatedBy(",") ~ optional(",") }
   def arrayLiteralItem = expression
   def dictionaryLiteral = rule {
-    '[' ~ dictionaryLiteralItems ~ ']' ~> (DictLit(_)) |
-    '[' ~ ':' ~ ']' ~ push(DictLit(Seq.empty))
+    "[" ~ dictionaryLiteralItems ~ "]" ~> (DictLit(_)) |
+    "[" ~ ":" ~ "]" ~ push(DictLit(Seq.empty))
   }
-  def dictionaryLiteralItems = rule { oneOrMore(dictionaryLiteralItem).separatedBy(wsSafe(',')) ~ optional(',') }
-  def dictionaryLiteralItem= rule { expression ~ ':' ~ expression ~> ((_, _)) }
+  def dictionaryLiteralItems = rule { oneOrMore(dictionaryLiteralItem).separatedBy(",") ~ optional(",") }
+  def dictionaryLiteralItem= rule { expression ~ ":" ~ expression ~> ((_, _)) }
 
   def selfExpression: Rule1[SelfExpr] = rule {
-    ("self" ~ '.' ~ "init" ~ push(SelfExprInit)) |
-    "self" ~ '[' ~ expression ~ ']' ~> (SelfExprSub(_)) |
-    "self" ~ '.' ~ identifier ~> (SelfExprId(_)) |
+    ("self" ~ "." ~ "init" ~ push(SelfExprInit)) |
+    "self" ~ "[" ~ expression ~ "]" ~> (SelfExprSub(_)) |
+    "self" ~ "." ~ identifier ~> (SelfExprId(_)) |
     "self" ~ push(SelfExprPlain)
   }
 
   def superclassExpression: Rule1[SuperExpr] = rule {
     superclassInitializerExpression | superclassMethodExpression | superclassSubscriptExpression
   }
-  def superclassMethodExpression = rule { "super" ~ '.' ~ identifier ~> (SuperExprId(_)) }
-  def superclassSubscriptExpression = rule { "super" ~ '[' ~ expression ~ ']' ~> (SuperExprSub(_)) }
-  def superclassInitializerExpression = rule { "super" ~ '.' ~ "init" ~ push(SuperExprInit) }
+  def superclassMethodExpression = rule { "super" ~ "." ~ identifier ~> (SuperExprId(_)) }
+  def superclassSubscriptExpression = rule { "super" ~ "[" ~ expression ~ "]" ~> (SuperExprSub(_)) }
+  def superclassInitializerExpression = rule { "super" ~ "." ~ "init" ~ push(SuperExprInit) }
 
-  def closureExpression = rule { optional(closureSignature) ~ statements ~> (ClosureExpr(_, _)) }
+  def closureExpression = rule { "{" ~ optional(closureSignature) ~ statements ~ "}" ~> (ClosureExpr(_, _)) }
   def closureSignature = rule {
     captureList ~ "in" ~> (capList => ClosureSig(None, Seq.empty, None, Some(capList))) |
     captureList ~ identifierList ~ optional(functionResult) ~ "in" ~> (
@@ -297,19 +306,19 @@ class SwiftParser(val input: ParserInput) extends Parser {
       (params, res) => ClosureSig(Some(params), Seq.empty, res, None)
     )
   }
-  def captureList = rule { captureSpecifier ~ expression ~> (CaptureList(_, _)) }
+  def captureList = rule { "[" ~ captureSpecifier ~ expression ~ "]" ~> (CaptureList(_, _)) }
   def captureSpecifier = rule { valueMap(CaptureSpec.vals) }
 
-  def implicitMemberExpression = rule { '.' ~ identifier ~> (ImplicitMemberExpr(_)) }
+  def implicitMemberExpression = rule { "." ~ identifier ~> (ImplicitMemberExpr(_)) }
 
-  def parenthesizedExpression = rule { '(' ~ optional(expressionElementList) ~ ')' ~> (ParenExpr(_)) }
-  def expressionElementList = rule { oneOrMore(expressionElement).separatedBy(wsSafe(',')) }
+  def parenthesizedExpression = rule { "(" ~ optional(expressionElementList) ~ ")" ~> (ParenExpr(_)) }
+  def expressionElementList = rule { oneOrMore(expressionElement).separatedBy(",") }
   def expressionElement: Rule1[ExprElem] = rule {
-    identifier ~ ':' ~ expression ~> (ExprElemId(_, _)) |
+    identifier ~ ":" ~ expression ~> (ExprElemId(_, _)) |
     expression ~> (ExprElemExpr(_))
   }
 
-  def wildcardExpression = rule { '_' ~ push(WildExpr) }
+  def wildcardExpression = rule { "_" ~ push(WildExpr) }
 
   // Postfix Expressions
 
@@ -327,26 +336,26 @@ class SwiftParser(val input: ParserInput) extends Parser {
   }
   def trailingClosure = closureExpression
 
-  def initializerExpression = rule { postfixExpression ~ '.' ~ "init" ~> (InitExpr(_)) }
+  def initializerExpression = rule { postfixExpression ~ "." ~ "init" ~> (InitExpr(_)) }
 
   def explicitMemberExpression: Rule1[ExplicitMemberExpr] = rule {
-    postfixExpression ~ '.' ~ capture(decimalDigit) ~> (
+    postfixExpression ~ "." ~ capture(decimalDigit) ~> (
       (expr, str) => ExplicitMemberExprDigit(expr, str.head)
     ) |
-    postfixExpression ~ '.' ~ identifier ~ optional(genericArgumentClause) ~> (ExplicitMemberExprId(_, _, _))
+    postfixExpression ~ "." ~ identifier ~ optional(genericArgumentClause) ~> (ExplicitMemberExprId(_, _, _))
   }
 
-  def postfixSelfExpression = rule { postfixExpression ~ '.' ~ "self" ~> (PostSelfExpr(_)) }
+  def postfixSelfExpression = rule { postfixExpression ~ "." ~ "self" ~> (PostSelfExpr(_)) }
 
-  def dynamicTypeExpression = rule { postfixExpression ~ '.' ~ "dynamicType" ~> (DynTypeExpr(_)) }
+  def dynamicTypeExpression = rule { postfixExpression ~ "." ~ "dynamicType" ~> (DynTypeExpr(_)) }
 
   def subscriptExpression = rule {
-    postfixExpression ~ '[' ~ expressionList ~ ']' ~> (SubExpr(_, _))
+    postfixExpression ~ "[" ~ expressionList ~ "]" ~> (SubExpr(_, _))
   }
 
-  def forcedValueExpression = rule { postfixExpression ~ '!' ~> (ForceValExpr(_)) }
+  def forcedValueExpression = rule { postfixExpression ~ "!" ~> (ForceValExpr(_)) }
 
-  def optionalChainingExpression = rule { postfixExpression ~ '?' ~> (OptChainExpr(_)) }
+  def optionalChainingExpression = rule { postfixExpression ~ "?" ~> (OptChainExpr(_)) }
 
   /// Statements ///
 
@@ -414,7 +423,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   }
   def caseLabel = rule { "case" ~ caseItemList ~> (CaseLabel(_)) }
   def caseItemList = rule {
-    oneOrMore(pattern ~ optional(guardClause) ~> (CaseItem(_, _))).separatedBy(wsSafe(','))
+    oneOrMore(pattern ~ optional(guardClause) ~> (CaseItem(_, _))).separatedBy(",")
   }
   def defaultLabel = rule { "default" ~ ':' ~ push(DefaultLabel) }
   def guardClause = rule { "where" ~ guardExpression }
@@ -490,7 +499,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
     )
   }
 
-  def patternInitializerList = rule { oneOrMore(patternInitializer).separatedBy(wsSafe(',')) }
+  def patternInitializerList = rule { oneOrMore(patternInitializer).separatedBy(",") }
   def patternInitializer = rule { pattern ~ optional(initializer) ~> (PatternInit(_, _)) }
   def initializer = expression
 
@@ -584,7 +593,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
     ('(' ~ ')' ~ push(ParamClause(Seq.empty, false))) |
     '(' ~ parameterList ~ optional(capture("...")) ~ ')' ~> (ParamClause(_, _))
   }
-  def parameterList = rule { oneOrMore(parameter).separatedBy(wsSafe(',')) }
+  def parameterList = rule { oneOrMore(parameter).separatedBy(",") }
   def parameter: Rule1[Param] = rule {
     optional(capture("inout")) ~ "var" ~ optional(capture("#")) ~ parameterName ~
       optional(localParameterName) ~ typeAnnotation ~ optional(defaultArgumentClause) ~> (
@@ -619,7 +628,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   def unionStyleEnumCaseClause = rule {
     optional(attributes) ~ "case" ~ unionStyleEnumCaseList ~> (EnumCaseClause(_, _))
   }
-  def unionStyleEnumCaseList = rule { oneOrMore(unionStyleEnumCase).separatedBy(wsSafe(',')) }
+  def unionStyleEnumCaseList = rule { oneOrMore(unionStyleEnumCase).separatedBy(",") }
   def unionStyleEnumCase = rule { enumCaseName ~ optional(tupleType) ~> (UnionEnumCase(_, _)) }
   def enumName = identifier
   def enumCaseName = identifier
@@ -638,7 +647,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   def rawValueStyleEnumCaseClause = rule {
     optional(attributes) ~ "case" ~ rawValueStyleEnumCaseList ~> (EnumCaseClause(_, _))
   }
-  def rawValueStyleEnumCaseList = rule { oneOrMore(rawValueStyleEnumCase).separatedBy(wsSafe(',')) }
+  def rawValueStyleEnumCaseList = rule { oneOrMore(rawValueStyleEnumCase).separatedBy(",") }
   def rawValueStyleEnumCase = rule { enumCaseName ~ optional(rawValueAssignment) ~> (RawValEnumCase(_, _)) }
   def rawValueAssignment = rule { '=' ~ literal }
 
@@ -763,10 +772,10 @@ class SwiftParser(val input: ParserInput) extends Parser {
   /// Attributes ///
 
   def attribute = rule {
-    '@' ~ attributeName ~ optional(capture(attributeArgumentClause)) ~> (Attr(_, _))
+    '@' ~ attributeName ~ optional(attributeArgumentClause) ~> (Attr(_, _))
   }
   def attributeName = identifier
-  def attributeArgumentClause = rule { '(' ~ optional(balancedTokens) ~ ')' }
+  def attributeArgumentClause = rule { "(" ~ capture(optional(balancedTokens)) ~ ")" }
   def attributes = rule { oneOrMore(attribute) }
 
   def balancedTokens: Rule0 = rule { oneOrMore(balancedToken) }
@@ -804,7 +813,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   // Tuple Pattern
 
   def tuplePattern = rule { '(' ~ optional(tuplePatternElementList) ~ ')' ~> (TuplePatt(_)) }
-  def tuplePatternElementList = rule { oneOrMore(tuplePatternElement).separatedBy(wsSafe(',')) }
+  def tuplePatternElementList = rule { oneOrMore(tuplePatternElement).separatedBy(",") }
   def tuplePatternElement = pattern
 
   // Enumeration Case Pattern
@@ -830,7 +839,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   def genericParameterClause = rule {
     '<' ~ genericParameterList ~ optional(requirementClause) ~ '>' ~> (GenParamClause(_, _))
   }
-  def genericParameterList = rule { oneOrMore(genericParameter).separatedBy(wsSafe(',')) }
+  def genericParameterList = rule { oneOrMore(genericParameter).separatedBy(",") }
   def genericParameter: Rule1[GenParam] = rule {
     typeName ~ ':' ~ protocolCompositionType ~> (GenParamProto(_, _)) |
     typeName ~ ':' ~ typeIdentifier ~> (GenParamType(_, _)) |
@@ -838,7 +847,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   }
 
   def requirementClause = rule { "where" ~ requirementList }
-  def requirementList = rule { oneOrMore(requirement).separatedBy(wsSafe(',')) }
+  def requirementList = rule { oneOrMore(requirement).separatedBy(",") }
   def requirement: Rule1[Req] = rule { conformanceRequirement | sameTypeRequirement }
 
   def conformanceRequirement: Rule1[ConfReq] = rule {
@@ -850,7 +859,7 @@ class SwiftParser(val input: ParserInput) extends Parser {
   // Generic Argument Clause
 
   def genericArgumentClause = rule { '<' ~ genericArgumentList ~ '>' ~> (GenArgClause(_)) }
-  def genericArgumentList = rule { oneOrMore(genericArgument).separatedBy(wsSafe(',')) }
+  def genericArgumentList = rule { oneOrMore(genericArgument).separatedBy(",") }
   def genericArgument = typ
 
   // Helpers
