@@ -244,8 +244,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Type Inheritance Clause
 
-  def typeInheritanceClause = rule { ':' ~ typeInheritanceList }
-  def typeInheritanceList = rule { oneOrMore(typeIdentifier).separatedBy(",") }
+  def typeInheritanceClause = rule { ":" ~ typeInheritanceList }
+  def typeInheritanceList = rule { oneOrMore(typeIdentifier ~ ws).separatedBy(",") }
 
   /// Expressions ///
 
@@ -493,7 +493,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     protocolDeclaration | initializerDeclaration | deinitializerDeclaration |
     extensionDeclaration | subscriptDeclaration | operatorDeclaration
   }
-  def declarations = rule { oneOrMore(declaration) }
+  def declarations = rule { oneOrMore(declaration ~ ws) }
 
   def declarationSpecifiers = rule { oneOrMore(declarationSpecifier) }
   def declarationSpecifier = rule { valueMap(DeclSpec) ~ ws }
@@ -621,7 +621,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
   def functionBody = codeBlock
 
-  def parameterClauses = rule { oneOrMore(parameterClause) }
+  def parameterClauses = rule { oneOrMore(parameterClause ~ ws) }
   def parameterClause = rule {
     ("(" ~ ")" ~ ws ~ push(ParamClause(Seq.empty, false))) |
     "(" ~ parameterList ~ optional(capture("...") ~ ws) ~ ")" ~> (ParamClause(_, _))
@@ -645,11 +645,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Enumeration Declaration
 
   def enumDeclaration = rule {
-    optional(attributes) ~ (rawValueStyleEnum | unionStyleEnum) ~> (EnumDecl(_, _))
+    optional(attributes) ~ "enum" ~ (rawValueStyleEnum | unionStyleEnum) ~> (EnumDecl(_, _))
   }
 
   def unionStyleEnum = rule {
-    enumName ~ optional(genericParameterClause) ~ ":" ~ "{" ~ optional(unionStyleEnumMembers) ~ "}" ~> (
+    enumName ~ optional(genericParameterClause) ~  "{" ~ optional(unionStyleEnumMembers) ~ "}" ~> (
       Enum(_, _, _, None)
     )
   }
@@ -662,7 +662,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     optional(attributes) ~ "case" ~ unionStyleEnumCaseList ~> (EnumCaseClause(_, _))
   }
   def unionStyleEnumCaseList = rule { oneOrMore(unionStyleEnumCase).separatedBy(",") }
-  def unionStyleEnumCase = rule { enumCaseName ~ optional(tupleType) ~> (UnionEnumCase(_, _)) }
+  def unionStyleEnumCase = rule { enumCaseName ~ optional(tupleType) ~ ws ~> (UnionEnumCase(_, _)) }
   def enumName = rule { identifier ~ ws }
   def enumCaseName = rule { identifier ~ ws }
 
@@ -681,7 +681,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     optional(attributes) ~ "case" ~ rawValueStyleEnumCaseList ~> (EnumCaseClause(_, _))
   }
   def rawValueStyleEnumCaseList = rule { oneOrMore(rawValueStyleEnumCase).separatedBy(",") }
-  def rawValueStyleEnumCase = rule { enumCaseName ~ optional(rawValueAssignment) ~> (RawValEnumCase(_, _)) }
+  def rawValueStyleEnumCase = rule { enumCaseName ~ optional(rawValueAssignment) ~ ws ~> (RawValEnumCase(_, _)) }
   def rawValueAssignment = rule { "=" ~ literal }
 
   // Struct Declaration
@@ -690,8 +690,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     optional(attributes) ~ "struct" ~ structName ~ optional(genericParameterClause) ~
       optional(typeInheritanceClause) ~ structBody ~> (StructDecl(_, _, _, _, _))
   }
-  def structName = identifier
-  def structBody = rule { "{" ~ optional(declarations) ~ "}" }
+  def structName = rule { identifier ~ ws }
+  def structBody = rule { "{" ~ optional(declarations ~ ws) ~ "}" }
 
   // Class Declaration
 
@@ -699,8 +699,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     optional(attributes) ~ "class" ~ className ~ optional(genericParameterClause) ~
       optional(typeInheritanceClause) ~ classBody ~> (ClassDecl(_, _, _, _, _))
   }
-  def className = identifier
-  def classBody = rule { "{" ~ optional(declarations) ~ "}" }
+  def className = rule { identifier ~ ws }
+  def classBody = rule { "{" ~ optional(declarations ~ ws) ~ "}" }
 
   // Protocol Declaration
 
@@ -709,17 +709,17 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
       ProtoDecl(_, _, _, _)
     )
   }
-  def protocolName = identifier
+  def protocolName = rule { identifier ~ ws }
   def protocolBody = rule { "{" ~ optional(protocolMemberDeclarations) ~ "}" }
 
   def protocolMemberDeclaration: Rule1[ProtoMember] = rule {
-    protocolPropertyDeclaration | protocolMemberDeclaration | protocolInitializerDeclaration |
+    protocolPropertyDeclaration | protocolMethodDeclaration | protocolInitializerDeclaration |
     protocolSubscriptDeclaration | protocolAssociatedTypeDeclaration
   }
-  def protocolMemberDeclarations = rule { oneOrMore(protocolMemberDeclaration) }
+  def protocolMemberDeclarations = rule { oneOrMore(protocolMemberDeclaration ~ ws) }
 
   def protocolPropertyDeclaration = rule {
-    variableDeclarationHead ~ variableName ~ typeAnnotation ~ getterSetterKeywordBlock ~> (
+    variableDeclarationHead ~ variableName ~ typeAnnotation ~ ws ~ getterSetterKeywordBlock ~> (
       ProtoProp(_, _, _, _)
     )
   }
@@ -764,7 +764,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Extension Declaration
   def extensionDeclaration = rule {
-    "extension" ~ typeIdentifier ~ typeInheritanceClause ~ extensionBody ~> (ExtDecl(_, _, _))
+    "extension" ~ typeIdentifier ~ ws ~ typeInheritanceClause ~ extensionBody ~> (ExtDecl(_, _, _))
   }
   def extensionBody = rule { "{" ~ optional(declarations) ~ "}" }
 
@@ -776,7 +776,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     subscriptHead ~ subscriptResult ~ codeBlock ~> (SubDeclCode(_, _, _))
   }
   def subscriptHead = rule { optional(attributes) ~ "subscript" ~ parameterClause ~> (SubHead(_, _)) }
-  def subscriptResult = rule { optional(attributes) ~ typ ~> (SubResult(_, _)) }
+  def subscriptResult = rule { "->" ~ optional(attributes) ~ typ ~ ws ~> (SubResult(_, _)) }
 
   // Operator Declaration
 
@@ -785,21 +785,21 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def prefixOperatorDeclaration = rule {
-    "operator" ~ "prefix" ~ operator ~ "{" ~ "}" ~> (PreOperDecl(_))
+    "operator" ~ "prefix" ~ operator ~ ws ~ "{" ~ "}" ~> (PreOperDecl(_))
   }
   def postfixOperatorDeclaration = rule {
-    "operator" ~ "postfix" ~ operator ~ "{" ~ "}" ~> (PostOperDecl(_))
+    "operator" ~ "postfix" ~ operator ~ ws ~ "{" ~ "}" ~> (PostOperDecl(_))
   }
   def infixOperatorDeclaration = rule {
-    "operator" ~ "infix" ~ operator ~ "{" ~ optional(infixOperatorAttributes) ~ "}" ~> (InfixOperDecl(_, _))
+    "operator" ~ "infix" ~ operator ~ ws ~ "{" ~ optional(infixOperatorAttributes) ~ "}" ~> (InfixOperDecl(_, _))
   }
 
   def infixOperatorAttributes = rule {
     optional(precedenceClause) ~ optional(associativityClause) ~> (InfixOperAttrs(_, _) )
   }
-  def precedenceClause = rule { "precedence" ~ precedenceLevel }
+  def precedenceClause = rule { "precedence" ~ precedenceLevel ~ ws }
   def precedenceLevel = rule { capture(3.times(CharPredicate.Digit)) ~> (_.toShort) }
-  def associativityClause = rule { "associativity" ~ associativity }
+  def associativityClause = rule { "associativity" ~ associativity ~ ws }
   def associativity = rule { valueMap(Assoc) }
 
   /// Attributes ///
@@ -809,7 +809,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
   def attributeName = rule { identifier ~ ws }
   def attributeArgumentClause = rule { "(" ~ capture(optional(balancedTokens)) ~ ")" }
-  def attributes = rule { oneOrMore(attribute) }
+  def attributes = rule { oneOrMore(attribute ~ ws) }
 
   def balancedTokens: Rule0 = rule { oneOrMore(balancedToken) }
   def balancedToken: Rule0 = rule {

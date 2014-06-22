@@ -345,17 +345,17 @@ object Ast {
 
   case class FuncDecl(head: FuncHead, name: FuncName, gen: Option[GenParamClause],
     sig: FuncSig, stmts: Seq[Stmt]) extends Decl
-  case class FuncHead(attrs: Seq[Attr], specs: Seq[DeclSpec])
+  case class FuncHead(attrs: Seq[Attr] = Seq.empty, specs: Seq[DeclSpec] = Seq.empty)
   sealed trait FuncName
   implicit def stringToFuncName(str: String): FuncName = FuncNameId(str)
   case class FuncNameId(id: Id) extends FuncName
   case class FuncNameOper(oper: Oper) extends FuncName
   case class FuncSig(paramClauses: Seq[ParamClause], res: Option[FuncResult])
   case class FuncResult(attrs: Seq[Attr], typ: Type)
-  case class ParamClause(params: Seq[Param], vararg: Boolean)
+  case class ParamClause(params: Seq[Param], vararg: Boolean = false)
   sealed trait Param
   case class ParamNorm(inout: Boolean, isVar: Boolean, hash: Boolean,
-    name: ParamName, localName: Option[ParamName], typeAnn: TypeAnn, default: Option[Expr]) extends Param
+    name: ParamName, localName: Option[ParamName], typeAnn: TypeAnn, default: Option[Expr] = None) extends Param
   case class ParamAttr(attrs: Seq[Attr], typ: Type) extends Param
   sealed trait ParamName
   implicit def stringToParamName(str: String): ParamName = ParamNameId(str)
@@ -365,14 +365,14 @@ object Ast {
   // Enumeration Declaration
 
   case class EnumDecl(attrs: Seq[Attr], enum: Enum) extends Decl
-  case class Enum(id: Id, gen: Option[GenParamClause], members: Seq[EnumMember], typeId: Option[TypeId])
+  case class Enum(id: Id, gen: Option[GenParamClause], members: Seq[EnumMember], typeId: Option[TypeId] = None)
   sealed trait EnumMember
   case class EnumMemberDecl(decl: Decl) extends EnumMember
   case class EnumMemberCase(clause: EnumCaseClause) extends EnumMember
   case class EnumCaseClause(attrs: Seq[Attr], cases: Seq[EnumCase])
   sealed trait EnumCase
-  case class UnionEnumCase(id: Id, typ: Option[TupleType]) extends EnumCase
-  case class RawValEnumCase(id: Id, lit: Option[Lit]) extends EnumCase
+  case class UnionEnumCase(id: Id, typ: Option[TupleType] = None) extends EnumCase
+  case class RawValEnumCase(id: Id, lit: Option[Lit] = None) extends EnumCase
 
   // Structure Declaration
 
@@ -397,7 +397,7 @@ object Ast {
   // Initializer Declaration
 
   case class InitDecl(head: InitHead, gen: Option[GenParamClause], param: ParamClause, stmts: Seq[Stmt]) extends Decl
-  case class InitHead(attrs: Seq[Attr], conv: Boolean)
+  case class InitHead(attrs: Seq[Attr] = Seq.empty, conv: Boolean = false)
 
   // Deinitializer Declaration
 

@@ -154,11 +154,61 @@ class ParserSpec extends GulliverSpec {
     assertDecl("typealias foo·=·bar", TypeAliasDecl("foo", "bar"))
     assertDecl("@·foo·(bar)·weak func baz·<·qux·>·(·inout let quux corge·:·grault·=·garply·)·" +
       "(·var #·waldo·:·fred·,·_·:·plugh·...·)·->·xyzzy·{·thud·(·)·}",
-      FuncDecl(FuncHead(Attr("foo", "bar"), DeclSpec.Weak), "baz", GenParamClause(GenParamPlain("qux")),
-        FuncSig(Seq(ParamClause(ParamNorm(true, false, false, "quux", Some("corge"), "grault",
-        Some("garply")), false), ParamClause(Seq(ParamNorm(false, true, true, "waldo", None, "fred", None),
-        ParamNorm(false, false, false, ParamNameIgnore, None, "plugh", None)), true)),
-        FuncResult(Seq.empty, "xyzzy")), ExprStmt(FuncCallExprPlain("thud"))))
+      FuncDecl(
+        FuncHead(Attr("foo", "bar"), DeclSpec.Weak), "baz", GenParamClause(GenParamPlain("qux")),
+        FuncSig(Seq(
+          ParamClause(ParamNorm(true, false, false, "quux", Some("corge"), "grault", Some("garply")), false),
+          ParamClause(Seq(
+            ParamNorm(false, true, true, "waldo", None, "fred", None),
+            ParamNorm(false, false, false, ParamNameIgnore, None, "plugh", None)
+          ), true)
+        ), FuncResult(Seq.empty, "xyzzy")), ExprStmt(FuncCallExprPlain("thud"))))
+    assertDecl("@·foo·(bar)·enum baz·<·qux·>·{·var quux·=·corge @grault·(garply) case waldo·,·" +
+      "fred·(·plugh·) case xyzzy·}",
+      EnumDecl(Attr("foo", "bar"), Enum("baz", GenParamClause(Seq("qux")), Seq(
+        EnumMemberDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("quux"), Some("corge")))),
+        EnumMemberCase(EnumCaseClause(Attr("grault", "garply"), Seq(
+          UnionEnumCase("waldo"),
+          UnionEnumCase("fred", TupleType(TupleTypeElemType(Seq.empty, false, "plugh"), false))
+        ))),
+        EnumMemberCase(EnumCaseClause(Seq.empty, UnionEnumCase("xyzzy")))
+      )))
+    )
+    assertDecl("@·foo·(bar)·enum baz·<·qux·>·:·thud·{·var quux·=·corge @grault·(garply) case waldo·,·" +
+      "fred·=·5 case xyzzy·}",
+      EnumDecl(Attr("foo", "bar"), Enum("baz", GenParamClause(Seq("qux")), Seq(
+        EnumMemberDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("quux"), Some("corge")))),
+        EnumMemberCase(EnumCaseClause(Attr("grault", "garply"), Seq(
+          RawValEnumCase("waldo"),
+          RawValEnumCase("fred", Some(DecimalLit("5")))
+        ))),
+        EnumMemberCase(EnumCaseClause(Seq.empty, RawValEnumCase("xyzzy")))
+      ), Some("thud")))
+    )
+    assertDecl("@·foo·(bar)·struct baz·<·qux·>·:·quux·,·corge·{·var grault·=·garply·}",
+      StructDecl(Attr("foo", "bar"), "baz", GenParamClause(Seq("qux")),
+        Seq("quux", "corge"), VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("grault"), Some("garply")))))
+    assertDecl("@·foo·(bar)·class baz·<·qux·>·:·quux·,·corge·{·var grault·=·garply·}",
+      ClassDecl(Attr("foo", "bar"), "baz", GenParamClause(Seq("qux")),
+        Seq("quux", "corge"), VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("grault"), Some("garply")))))
+    assertDecl("@·foo·(bar)·protocol baz·:·qux·,·quux·{·" +
+      "var foo·:·bar·{·get set·}·" +
+      "func foo·<·bar·>·(·baz·:·qux·)·->·quux " +
+      "convenience init·<·foo·>·(·bar·:·baz) " +
+      "subscript·(·foo·:·bar·)·->·baz·{·get set·} " +
+      "typealias foo·:·bar·,·baz·=·qux·}",
+      ProtoDecl(Attr("foo", "bar"), "baz", Seq("qux", "quux"), Seq(
+        ProtoProp(VarDeclHead(), "foo", "bar", GetSetKeyBlock(GetSetKeyClause(), GetSetKeyClause())),
+        ProtoMeth(FuncHead(), "foo", GenParamClause(Seq("bar")), FuncSig(
+          ParamClause(ParamNorm(false, false, false, "baz", None, "qux")), FuncResult(Seq.empty, "quux"))),
+        ProtoInit(InitHead(Seq.empty, true), GenParamClause(Seq("foo")),
+          ParamClause(ParamNorm(false, false, false, "bar", None, "baz"))),
+        ProtoSub(SubHead(Seq.empty,
+          ParamClause(ParamNorm(false, false, false, "foo", None, "bar"))),
+          SubResult(Seq.empty, "baz"), GetSetKeyBlock(GetSetKeyClause(), GetSetKeyClause())),
+        ProtoAssocType("foo", Seq("bar", "baz"), Some("qux"))
+      ))
+    )
   }
 
   it should "handle patterns" in {
