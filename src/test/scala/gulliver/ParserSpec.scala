@@ -12,7 +12,9 @@ class ParserSpec extends GulliverSpec {
   implicit def singleToSeq[T](v: T): Seq[T] = Seq(v)
   implicit def valToSome[T](v: T): Option[T] = Some(v)
 
-  // Keep in order of the Parser class
+  // Keep in order of the Parser class. The presence of "{s}" in a string means whitespace
+  //  can appear and the result shouldn't be affected.
+  val dot = '·'
 
   "Parser" should "handle whitespace" in {
     "  \n  " shouldParseWith(_.ws.run())
@@ -20,7 +22,7 @@ class ParserSpec extends GulliverSpec {
 
   it should "handle single line comments" in {
     "//Some comment" parsedWith(_.singleLineComment.run()) should be(SingleLineComment("Some comment"))
-    "//Some comment\n" parsedWith(_.singleLineComment.run()) should be(SingleLineComment("Some comment"))
+    s"//Some comment\n·" parsedWith(_.singleLineComment.run()) should be(SingleLineComment("Some comment"))
   }
 
   it should "handle multi line comments" in {
@@ -38,7 +40,7 @@ class ParserSpec extends GulliverSpec {
   }
 
   it should "handle identifier list" in {
-    "foo, bar, `baz`" parsedWith(_.identifierList.run()) should be(Seq(Id("foo"), Id("bar"), Id("baz")))
+    "foo·,·bar·,·`baz`" parsedWith(_.identifierList.run()) should be(Seq(Id("foo"), Id("bar"), Id("baz")))
   }
 
   it should "handle literals" in {
@@ -60,64 +62,118 @@ class ParserSpec extends GulliverSpec {
   }
 
   it should "handle types" in {
-    "foo" parsedWith(_.typ.run()) should be(TypeId("foo"))
-    "foo<bar>.baz" parsedWith(_.typ.run()) should be(TypeId("foo", GenArgClause(Seq("bar")), Some("baz")))
-    "(@something(else) foo, inout bar, baz: String...)" parsedWith(_.typ.run()) should be(
+    def assertType(str: String, result: Type): Unit = str parsedWith(_.typ.run()) should be(result)
+    assertType("foo", "foo")
+    assertType("foo·<·bar·>·.·baz", TypeId("foo", GenArgClause(Seq("bar")), Some("baz")))
+    assertType("(·@·something·(else)·foo·,·inout bar·,·baz·:·String·...)",
       TupleType(Seq(
         TupleTypeElemType(Attr("something", "else"), false, "foo"),
         TupleTypeElemType(Seq.empty, true, "bar"),
         TupleTypeElemName(false, "baz", TypeAnn(Seq.empty, "String"))), true))
-    "foo -> bar -> baz" parsedWith(_.typ.run()) should be(FuncType("foo", FuncType("bar", "baz")))
-    "foo[ ] []" parsedWith(_.typ.run()) should be(ArrayType("foo", 2))
-    "foo?" parsedWith(_.typ.run()) should be(OptType("foo"))
-    "foo!" parsedWith(_.typ.run()) should be(ImplicitOptType("foo"))
-    "protocol<foo, bar>" parsedWith(_.typ.run()) should be(ProtoCompType(Seq("foo", "bar")))
-    "foo.Type" parsedWith(_.typ.run()) should be(MetaTypeType("foo"))
-    "foo.Protocol" parsedWith(_.typ.run()) should be(MetaTypeProto("foo"))
-    "foo[]!?[]" parsedWith(_.typ.run()) should be(
-      ArrayType(OptType(ImplicitOptType(ArrayType("foo", 1))), 1))
+    assertType("foo·->·bar·->·baz", FuncType("foo", FuncType("bar", "baz")))
+    assertType("foo·[·]·[·]", ArrayType("foo", 2))
+    assertType("foo?", OptType("foo"))
+    assertType("foo!", ImplicitOptType("foo"))
+    assertType("protocol·<·foo·,·bar·>", ProtoCompType(Seq("foo", "bar")))
+    assertType("foo·.·Type", MetaTypeType("foo"))
+    assertType("foo·.·Protocol", MetaTypeProto("foo"))
+    assertType("foo·[·]·!·?·[·]", ArrayType(OptType(ImplicitOptType(ArrayType("foo", 1))), 1))
   }
 
   it should "handle expressions" in {
-    "++foo" parsedWith(_.expression.run()) should be(Expr(PreExprOper(Some("++"), "foo")))
-    "&foo" parsedWith(_.expression.run()) should be(Expr(PreExprInOut("foo"), Seq.empty))
-    "foo + bar" parsedWith(_.expression.run()) should be(Expr("foo", BinExprBin("+", "bar")))
-    "foo = bar" parsedWith(_.expression.run()) should be(Expr("foo", BinExprAssign("bar")))
-    "foo ? bar : baz" parsedWith(_.expression.run()) should be(Expr("foo", BinExprCond("bar", "baz")))
-    "foo as bar" parsedWith(_.expression.run()) should be(Expr("foo", BinExprCast(TypeCastOperAs(false, "bar"))))
-    "foo as? bar" parsedWith(_.expression.run()) should be(Expr("foo", BinExprCast(TypeCastOperAs(true, "bar"))))
-    "foo is bar" parsedWith(_.expression.run()) should be(Expr("foo", BinExprCast(TypeCastOperIs("bar"))))
-    "foo" parsedWith(_.expression.run()) should be(Expr("foo"))
-    "foo<bar>" parsedWith(_.expression.run()) should be(
-      Expr(PostExprPrim(PrimExprId("foo", GenArgClause(Seq("bar"))))))
-    "__FILE__" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(LitExprSpecial.File)))
-    "[foo, bar]" parsedWith(_.expression.run()) should be(
-      Expr(PostExprPrim(LitExprArray(ArrayLit(Seq("foo", "bar"))))))
-    "[foo: bar, baz: qux]" parsedWith(_.expression.run()) should be(
-      Expr(PostExprPrim(LitExprDict(DictLit(Seq(Expr("foo") -> Expr("bar"), Expr("baz") -> Expr("qux")))))))
-    "self" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SelfExprPlain)))
-    "self.foo" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SelfExprId("foo"))))
-    "self[foo]" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SelfExprSub("foo"))))
-    "self.init" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SelfExprInit)))
-    "super.foo" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SuperExprId("foo"))))
-    "super[foo]" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SuperExprSub("foo"))))
-    "super.init" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(SuperExprInit)))
+    def assertExpr(str: String, result: Expr): Unit = str parsedWith(_.expression.run()) should be(result)
+    assertExpr("++foo", PreExprOper(Some("++"), "foo"))
+    assertExpr("&foo", PreExprInOut("foo"))
+    assertExpr("foo·+·bar", Expr("foo", BinExprBin("+", "bar")))
+    assertExpr("foo·=·bar", Expr("foo", BinExprAssign("bar")))
+    assertExpr("foo·?·bar·:·baz", Expr("foo", BinExprCond("bar", "baz")))
+    assertExpr("foo as bar", Expr("foo", BinExprCast(TypeCastOperAs(false, "bar"))))
+    assertExpr("foo as? bar", Expr("foo", BinExprCast(TypeCastOperAs(true, "bar"))))
+    assertExpr("foo is bar", Expr("foo", BinExprCast(TypeCastOperIs("bar"))))
+    assertExpr("foo", "foo")
+    assertExpr("foo·<·bar·>", PostExprPrim(PrimExprId("foo", GenArgClause(Seq("bar")))))
+    assertExpr("__FILE__", PostExprPrim(LitExprSpecial.File))
+    assertExpr("[·foo·,·bar·]", PostExprPrim(LitExprArray(ArrayLit(Seq("foo", "bar")))))
+    assertExpr("[·foo·:·bar·,·baz·:·qux·]",
+      PostExprPrim(LitExprDict(DictLit(Seq(Expr("foo") -> Expr("bar"), Expr("baz") -> Expr("qux"))))))
+    assertExpr("self", PostExprPrim(SelfExprPlain))
+    assertExpr("self·.·foo", PostExprPrim(SelfExprId("foo")))
+    assertExpr("self·[·foo·]", PostExprPrim(SelfExprSub("foo")))
+    assertExpr("self·.·init", PostExprPrim(SelfExprInit))
+    assertExpr("super·.·foo", PostExprPrim(SuperExprId("foo")))
+    assertExpr("super·[·foo·]", PostExprPrim(SuperExprSub("foo")))
+    assertExpr("super·.·init", PostExprPrim(SuperExprInit))
     // TODO: closure
-    ".foo" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(ImplicitMemberExpr("foo"))))
-    "(foo, bar: baz)" parsedWith(_.expression.run()) should be(
-      Expr(PostExprPrim(ParenExpr(Seq(ExprElemExpr("foo"), ExprElemId("bar", "baz"))))))
-    "_" parsedWith(_.expression.run()) should be(Expr(PostExprPrim(WildExpr)))
-    "foo++" parsedWith(_.expression.run()) should be(Expr(PostExprOper("foo", "++")))
-    "foo(bar, baz)" parsedWith(_.expression.run()) should be(
-      Expr(FuncCallExprPlain("foo", ParenExpr(Seq(ExprElemExpr("bar"), ExprElemExpr("baz"))))))
+    assertExpr(".·foo", PostExprPrim(ImplicitMemberExpr("foo")))
+    assertExpr("(·foo·,·bar·:·baz)", PostExprPrim(ParenExpr(Seq(ExprElemExpr("foo"), ExprElemId("bar", "baz")))))
+    assertExpr("_", PostExprPrim(WildExpr))
+    assertExpr("foo++", PostExprOper("foo", "++"))
+    assertExpr("foo·(·bar·,·baz·)", FuncCallExprPlain("foo", ParenExpr(Seq(ExprElemExpr("bar"), ExprElemExpr("baz")))))
     // TODO: Func w/ trailing closure
-    "foo.init" parsedWith(_.expression.run()) should be(Expr(InitExpr("foo")))
-    "foo.1" parsedWith(_.expression.run()) should be(Expr(ExplicitMemberExprDigit("foo", '1')))
-    "foo.bar" parsedWith(_.expression.run()) should be(Expr(ExplicitMemberExprId("foo", "bar")))
-    "foo.self" parsedWith(_.expression.run()) should be(Expr(PostSelfExpr("foo")))
-    "foo.dynamicType" parsedWith(_.expression.run()) should be(Expr(DynTypeExpr("foo")))
-    "foo[bar, baz]" parsedWith(_.expression.run()) should be(Expr(SubExpr("foo", Seq("bar", "baz"))))
-    "foo!" parsedWith(_.expression.run()) should be(Expr(ForceValExpr("foo")))
-    "foo?" parsedWith(_.expression.run()) should be(Expr(OptChainExpr("foo")))
+    assertExpr("foo·.·init", InitExpr("foo"))
+    assertExpr("foo·.·1", ExplicitMemberExprDigit("foo", '1'))
+    assertExpr("foo·.·bar", ExplicitMemberExprId("foo", "bar"))
+    assertExpr("foo·.·self", PostSelfExpr("foo"))
+    assertExpr("foo·.·dynamicType", DynTypeExpr("foo"))
+    assertExpr("foo·[·bar·,·baz·]", SubExpr("foo", Seq("bar", "baz")))
+    assertExpr("foo·!", ForceValExpr("foo"))
+    assertExpr("foo·?", OptChainExpr("foo"))
+  }
+
+  it should "handle statements" in {
+    def assertStmt(str: String, result: Stmt): Unit = str parsedWith(_.statement.run()) should be(result)
+    assertStmt("foo·(·bar·)·;", Expr(FuncCallExprPlain("foo", ParenExpr(ExprElemExpr("bar")))))
+    // TODO: declaration
+//    assertStmt("for var i = 0; i < 10; i++ { println(i) }") should be(
+//      ForStmt(ForInitDecl())
+//    )
+//    println("for var i = 0; i < 10; i++ { println(i) }" parsedWith(_.statement.run()))
+  }
+
+  it should "handle declarations" in {
+    def assertDecl(str: String, result: Decl): Unit = str parsedWith(_.declaration.run()) should be(result)
+    // TODO: top level and code block
+    assertDecl("@·foo·(bar)·import class baz·.·qux·.·+", ImportDecl(Attr("foo", "bar"), ImportKind.Class,
+      ImportPath("baz", ImportPath("qux", ImportPath(ImportPathIdOper("+"))))))
+    assertDecl("@·foo·(bar)·weak let baz·=·qux", ConstDecl(Attr("foo", "bar"), DeclSpec.Weak,
+      PatternInit(IdPatt("baz"), Some("qux"))))
+    assertDecl("@·foo·(bar)·weak var baz·=·qux",
+      VarDeclPatt(VarDeclHead(Attr("foo", "bar"), DeclSpec.Weak), PatternInit(IdPatt("baz"), Some("qux"))))
+    assertDecl("var foo·:·bar·{·baz·(·)·}",
+      VarDeclCode(VarDeclHead(), "foo", "bar", ExprStmt(FuncCallExprPlain("baz"))))
+    assertDecl("var foo·:·bar·{·get·{·baz·(·)·}·set·(·qux·)·{·quux·(·)·}·}",
+      VarDeclGetSet(VarDeclHead(), "foo", "bar", GetSetBlock(
+        GetClause(Seq.empty, ExprStmt(FuncCallExprPlain("baz"))),
+        SetClause(Seq.empty, Some("qux"), ExprStmt(FuncCallExprPlain("quux"))))))
+    assertDecl("var foo·:·bar·{·get set·}",
+      VarDeclGetSetKey(VarDeclHead(), "foo", "bar", GetSetKeyBlock(GetSetKeyClause(), GetSetKeyClause())))
+    assertDecl("var foo·:·bar·=·baz·{·willSet·(·qux·)·{·quux·(·)·}·didSet·(·corge·)·{·grault·(·)·}·}",
+      VarDeclWillDidSet(VarDeclHead(), "foo", "bar", Some("baz"), WillDidSetBlock(
+        WillDidSetClause(Seq.empty, Some("qux"), ExprStmt(FuncCallExprPlain("quux"))),
+        WillDidSetClause(Seq.empty, Some("corge"), ExprStmt(FuncCallExprPlain("grault"))))))
+    assertDecl("typealias foo·=·bar", TypeAliasDecl("foo", "bar"))
+    assertDecl("@·foo·(bar)·weak func baz·<·qux·>·(·inout let quux corge·:·grault·=·garply·)·" +
+      "(·var #·waldo·:·fred·,·_·:·plugh·...·)·->·xyzzy·{·thud·(·)·}",
+      FuncDecl(FuncHead(Attr("foo", "bar"), DeclSpec.Weak), "baz", GenParamClause(GenParamPlain("qux")),
+        FuncSig(Seq(ParamClause(ParamNorm(true, false, false, "quux", Some("corge"), "grault",
+        Some("garply")), false), ParamClause(Seq(ParamNorm(false, true, true, "waldo", None, "fred", None),
+        ParamNorm(false, false, false, ParamNameIgnore, None, "plugh", None)), true)),
+        FuncResult(Seq.empty, "xyzzy")), ExprStmt(FuncCallExprPlain("thud"))))
+  }
+
+  it should "handle patterns" in {
+    def assertPatt(str: String, result: Patt): Unit = str parsedWith(_.pattern.run()) should be(result)
+    assertPatt("_·:·foo", WildPatt(Some("foo")))
+    assertPatt("foo·:·bar", IdPatt("foo", Some("bar")))
+    assertPatt("let foo", ValPattLet(IdPatt("foo")))
+    assertPatt("var foo", ValPattVar(IdPatt("foo")))
+    assertPatt("(·foo·:·bar·,·baz·:·qux·)·:·quux",
+      TuplePatt(Seq(IdPatt("foo", Some("bar")), IdPatt("baz", Some("qux"))), Some("quux")))
+    assertPatt("(·)", TuplePatt(Seq.empty))
+    assertPatt("foo·.·bar·(·baz·,·qux·)", EnumCasePatt(Some("foo"), "bar", TuplePatt(Seq(IdPatt("baz"), IdPatt("qux")))))
+    assertPatt(".·foo", EnumCasePatt(None, "foo"))
+    assertPatt("is foo", TypeCastPattIs("foo"))
+    assertPatt("foo as bar", TypeCastPattAs(IdPatt("foo"), "bar"))
+    assertPatt("foo·+·bar", ExprPatt(Expr("foo", BinExprBin("+", "bar"))))
   }
 }

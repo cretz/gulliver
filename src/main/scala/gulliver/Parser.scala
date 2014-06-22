@@ -16,6 +16,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   val wsChar = CharPredicate(" \r\n\t\13\f\0")
   def ws = rule { zeroOrMore(wsChar) }
+  def wsReq = rule { oneOrMore(wsChar) }
+  def noWs = rule { !wsChar }
   def eol = rule { CharPredicate("\r\n") | str("\r\n") }
   implicit def wsStr(s: String): Rule0 = rule { str(s) ~ ws }
 
@@ -34,9 +36,9 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def identifier = rule {
     (identifierNormal | identifierEscaped | implicitParameterName) ~> (Id(_))
   }
-  def identifierNormal = rule { capture(identifierHead ~ identifierChars) }
+  def identifierNormal = rule { !globalKeywords ~ capture(identifierHead ~ identifierChars) }
   def identifierEscaped = rule { '`' ~ capture(identifierHead ~ identifierChars) ~ '`' }
-  def identifierList = rule { oneOrMore(identifier).separatedBy(",") }
+  def identifierList = rule { oneOrMore(identifier ~ ws).separatedBy(",") }
   val identifierHead = CharPredicate(
     CharPredicate.Alpha, '_',
     "\u00a8\u00aa\u00ad\u00af", '\u00b2' to '\u00b5', '\u00b7' to '\u00ba',
@@ -58,6 +60,22 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   )
   def identifierChars = rule { oneOrMore(predicate(identifierChar)) }
   def implicitParameterName = rule { capture('$' ~ decimalDigits) }
+
+  // Keywords
+
+  def globalKeywords = rule { declarationKeywords | statementKeywords | expressionTypeKeywords }
+  def declarationKeywords = rule {
+    "class" | "deinit" | "enum" | "extension" | "func" | "import" | "init" | "let" |
+    "protocol" | "static" | "struct" | "subscript" | "typealias" | "var"
+  }
+  def statementKeywords = rule {
+    "break" | "case" | "continue" | "default" | "do" | "else" | "fallthrough" | "if" |
+    "in" | "for" | "return" | "switch" | "where" | "while"
+  }
+  def expressionTypeKeywords = rule {
+    "as" | "dynamicType" | "is" | "new" | "super" | "self" | "Self" | "Type" | "__COLUMN__" |
+    "__FILE__" | "__FUNCTION__" | "__LINE__"
+  }
 
   // Literals
 
@@ -141,10 +159,13 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   def operator = rule { capture(oneOrMore(operatorChar)) ~> (Oper(_))}
   val operatorChar = CharPredicate('/', '=', '-', '+', '!', '*', '%', '<', '>', '&', '|', '^', '~', '.')
-  def binaryOperator = rule { operator ~ ws }
+  def binaryOperator = rule {
+    wsReq ~ operator ~ wsReq |
+    noWs ~ operator ~ noWs
+  }
   // TODO: How to tell difference between prefix "." oper and implicit member expression?
-  def prefixOperator = rule { !('.' ~ !operatorChar) ~ operator }
-  def postfixOperator = rule { operator ~ ws }
+  def prefixOperator = rule { !('.' ~ !operatorChar) ~ operator ~ noWs }
+  def postfixOperator = rule { noWs ~ operator }
 
   /// Types ///
 
@@ -153,14 +174,14 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def typ: Rule1[Type] = rule {
-    typBase ~ ws ~
+    typBase ~
     zeroOrMore(
-      oneOrMore(capture("[") ~ "]") ~> ((s: Seq[String]) => ArrayType(TypeTmp, s.size)) |
-      "->" ~ typ ~> (FuncType(TypeTmp, _)) |
-      '?' ~ push(OptType(TypeTmp)) |
-      '!' ~ push(ImplicitOptType(TypeTmp)) |
-      "." ~ "Type" ~ push(MetaTypeType(TypeTmp)) |
-      "." ~ "Protocol" ~ push(MetaTypeProto(TypeTmp))
+      ws ~ oneOrMore(capture("[") ~ "]") ~> ((s: Seq[String]) => ArrayType(TypeTmp, s.size)) |
+      ws ~ "->" ~ typ ~> (FuncType(TypeTmp, _)) |
+      ws ~ '?' ~ push(OptType(TypeTmp)) |
+      ws ~ '!' ~ push(ImplicitOptType(TypeTmp)) |
+      ws ~ "." ~ "Type" ~ push(MetaTypeType(TypeTmp)) |
+      ws ~ "." ~ "Protocol" ~ push(MetaTypeProto(TypeTmp))
     ) ~> (
       (base: Type, right: Seq[Type]) =>
         right.foldLeft(base) { (left: Type, right: Type) =>
@@ -179,7 +200,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Type Annotation
 
-  def typeAnnotation = rule { ":" ~ optional(attributes) ~ typ ~> (TypeAnn(_, _)) }
+  def typeAnnotation = rule { ":" ~ optional(attributes) ~ typ ~ ws ~> (TypeAnn(_, _)) }
 
   // Type Identifier
 
@@ -187,7 +208,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     typeName ~ optional(genericArgumentClause) ~
       optional("." ~ !"Type" ~ !"Protocol" ~ typeIdentifier) ~> (TypeId(_, _, _))
   }
-  def typeName = identifier
+  def typeName = rule { identifier ~ ws }
 
   // Tuple Types
 
@@ -211,7 +232,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
       (a: Option[Seq[Attr]], i: Option[String], t: Type) => TupleTypeElemType(a, i, t)
     )
   }
-  def elementName = identifier
+  def elementName = rule { identifier ~ ws }
 
   // Protocol Composition Type
 
@@ -229,7 +250,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   /// Expressions ///
 
   def expression = rule { prefixExpression ~ optional(binaryExpressions) ~> (Expr(_, _)) }
-  def expressionList = rule { oneOrMore(expression).separatedBy(",") }
+  def expressionList = rule { oneOrMore(expression ~ ws).separatedBy(",") }
 
   // Prefix Expressions
 
@@ -242,7 +263,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Binary Expressions
 
   def binaryExpression: Rule1[BinExpr] = rule {
-    assignmentOperator ~ ws ~ prefixExpression ~> (BinExprAssign(_)) |
+    ws ~ assignmentOperator ~ ws ~ prefixExpression ~> (BinExprAssign(_)) |
     binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
     conditionalOperator ~ prefixExpression ~> (BinExprCond(_, _)) |
     typeCastingOperator ~> (BinExprCast(_))
@@ -251,11 +272,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   val assignmentOperator = CharPredicate('=')
 
-  def conditionalOperator = rule { "?" ~ expression ~ ":" ~> (CondOper(_)) }
+  def conditionalOperator = rule { ws ~ "?" ~ expression ~ ws ~ ":" ~> (CondOper(_)) }
 
   def typeCastingOperator: Rule1[TypeCastOper] = rule {
-    "is" ~ typ ~> (TypeCastOperIs(_)) |
-    "as" ~ optional(capture("?")) ~ typ ~> (TypeCastOperAs(_: Option[String], _: Type))
+    ws ~ "is" ~ ws ~ typ ~> (TypeCastOperIs(_)) |
+    ws ~ "as" ~ optional(capture("?")) ~ ws ~ typ ~> (TypeCastOperAs(_: Option[String], _: Type))
   }
 
   // Primary Expressions
@@ -263,7 +284,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def primaryExpression: Rule1[PrimExpr] = rule {
     literalExpression | selfExpression | superclassExpression | closureExpression |
     parenthesizedExpression | implicitMemberExpression | wildcardExpression |
-    identifier ~ ws ~ optional(genericArgumentClause) ~> (PrimExprId(_, _))
+    identifier ~ optional(ws ~ genericArgumentClause) ~> (PrimExprId(_, _))
   }
 
   def literalExpression: Rule1[LitExpr] = rule {
@@ -274,17 +295,17 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
   def arrayLiteral = rule { "[" ~ optional(arrayLiteralItems) ~ "]" ~> (ArrayLit(_)) }
   def arrayLiteralItems = rule { oneOrMore(arrayLiteralItem).separatedBy(",") ~ optional(",") }
-  def arrayLiteralItem = expression
+  def arrayLiteralItem = rule { expression ~ ws }
   def dictionaryLiteral = rule {
     "[" ~ dictionaryLiteralItems ~ "]" ~> (DictLit(_)) |
     "[" ~ ":" ~ "]" ~ push(DictLit(Seq.empty))
   }
-  def dictionaryLiteralItems = rule { oneOrMore(dictionaryLiteralItem).separatedBy(",") ~ optional(",") }
-  def dictionaryLiteralItem= rule { expression ~ ":" ~ expression ~> ((_, _)) }
+  def dictionaryLiteralItems = rule { oneOrMore(dictionaryLiteralItem).separatedBy(",") ~ ws ~ optional(",") }
+  def dictionaryLiteralItem= rule { expression ~ ws ~ ":" ~ expression ~ ws ~> ((_, _)) }
 
   def selfExpression: Rule1[SelfExpr] = rule {
     ("self" ~ "." ~ "init" ~ push(SelfExprInit)) |
-    "self" ~ "[" ~ expression ~ "]" ~> (SelfExprSub(_)) |
+    "self" ~ "[" ~ expression ~ ws ~ "]" ~> (SelfExprSub(_)) |
     "self" ~ "." ~ identifier ~> (SelfExprId(_)) |
     "self" ~ push(SelfExprPlain)
   }
@@ -293,10 +314,17 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     superclassInitializerExpression | superclassMethodExpression | superclassSubscriptExpression
   }
   def superclassMethodExpression = rule { "super" ~ "." ~ identifier ~> (SuperExprId(_)) }
-  def superclassSubscriptExpression = rule { "super" ~ "[" ~ expression ~ "]" ~> (SuperExprSub(_)) }
+  def superclassSubscriptExpression = rule { "super" ~ "[" ~ expression ~ ws ~ "]" ~> (SuperExprSub(_)) }
   def superclassInitializerExpression = rule { "super" ~ "." ~ "init" ~ push(SuperExprInit) }
 
-  def closureExpression = rule { "{" ~ optional(closureSignature) ~ statements ~ "}" ~> (ClosureExpr(_, _)) }
+  // TODO: I sure hope nobody wants to use a function called willSet or didSet. The less-lazy way to
+  //  do this is to walk the value stack to see if there's a var decl head and a primary expression
+  //  and nothing in between. We cannot just push an i-am-in-will-set-did-set in the var decl because
+  //  it would extend to even child closures, so there's stack walking regardless. Either way, there
+  //  is a less-lazy approach we are not taking right now
+  def closureExpression = rule {
+    "{" ~ optional(closureSignature) ~ !"willSet" ~ !"didSet" ~ statements ~ "}" ~> (ClosureExpr(_, _))
+  }
   def closureSignature = rule {
     captureList ~ "in" ~> (capList => ClosureSig(None, Seq.empty, None, Some(capList))) |
     captureList ~ identifierList ~ optional(functionResult) ~ "in" ~> (
@@ -318,8 +346,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def parenthesizedExpression = rule { "(" ~ optional(expressionElementList) ~ ")" ~> (ParenExpr(_)) }
   def expressionElementList = rule { oneOrMore(expressionElement).separatedBy(",") }
   def expressionElement: Rule1[ExprElem] = rule {
-    identifier ~ ":" ~ expression ~> (ExprElemId(_, _)) |
-    expression ~> (ExprElemExpr(_))
+    identifier ~ ws ~ ":" ~ expression ~ ws ~> (ExprElemId(_, _)) |
+    expression ~ ws ~> (ExprElemExpr(_))
   }
 
   def wildcardExpression = rule { "_" ~ push(WildExpr) }
@@ -329,17 +357,17 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def postfixExpression: Rule1[PostExpr] = rule {
     (primaryExpression ~> (PostExprPrim(_))) ~
     zeroOrMore(
-      optional(parenthesizedExpression) ~ closureExpression ~> (FuncCallExprBlock(PostExprTmp, _, _)) |
-      parenthesizedExpression ~> (FuncCallExprPlain(PostExprTmp, _)) |
-      "." ~ "init" ~ push(InitExpr(PostExprTmp)) |
-      "." ~ "self" ~ push(PostSelfExpr(PostExprTmp)) |
-      "." ~ "dynamicType" ~ push(DynTypeExpr(PostExprTmp)) |
-      "." ~ capture(decimalDigit) ~> (str => ExplicitMemberExprDigit(PostExprTmp, str.head)) |
-      "." ~ identifier ~ optional(genericArgumentClause) ~> (ExplicitMemberExprId(PostExprTmp, _, _)) |
-      "[" ~ expressionList ~ "]" ~> (SubExpr(PostExprTmp, _)) |
-      "!" ~ push(ForceValExpr(PostExprTmp)) |
+      ws ~ optional(parenthesizedExpression) ~ closureExpression ~> (FuncCallExprBlock(PostExprTmp, _, _)) |
+      ws ~ parenthesizedExpression ~> (FuncCallExprPlain(PostExprTmp, _)) |
+      ws ~ "." ~ "init" ~ push(InitExpr(PostExprTmp)) |
+      ws ~ "." ~ "self" ~ push(PostSelfExpr(PostExprTmp)) |
+      ws ~ "." ~ "dynamicType" ~ push(DynTypeExpr(PostExprTmp)) |
+      ws ~ "." ~ capture(decimalDigit) ~> (str => ExplicitMemberExprDigit(PostExprTmp, str.head)) |
+      ws ~ "." ~ identifier ~ optional(ws ~ genericArgumentClause) ~> (ExplicitMemberExprId(PostExprTmp, _, _)) |
+      ws ~ "[" ~ expressionList ~ "]" ~> (SubExpr(PostExprTmp, _)) |
+      ws ~ "!" ~ push(ForceValExpr(PostExprTmp)) |
       // TODO: Is there a better way for this to not prematurely match a conditional expression
-      !conditionalOperator ~ "?" ~ push(OptChainExpr(PostExprTmp)) |
+      ws ~ !conditionalOperator ~ "?" ~ push(OptChainExpr(PostExprTmp)) |
       postfixOperator ~ !expression ~> (PostExprOper(PostExprTmp, _))
     ) ~> (
       (base: PostExpr, right: Seq[PostExpr]) =>
@@ -380,10 +408,10 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def forStatement = rule {
-    "for" ~ '(' ~ optional(forInit) ~ ';' ~ optional(expression) ~ ';' ~ optional(expression) ~ ')' ~ codeBlock ~> (
+    "for" ~ "(" ~ optional(forInit) ~ ";" ~ optional(expression) ~ ";" ~ optional(expression) ~ ")" ~ codeBlock ~> (
       ForStmt(_, _, _, _)
     ) |
-    "for" ~ optional(forInit) ~ ';' ~ optional(expression) ~ ';' ~ optional(expression) ~ codeBlock ~> (
+    "for" ~ optional(forInit) ~ ";" ~ optional(expression) ~ ";" ~ optional(expression) ~ codeBlock ~> (
       ForStmt(_, _, _, _)
     )
   }
@@ -417,12 +445,12 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def switchStatement = rule {
-    "switch" ~ expression ~ '{' ~ optional(switchCases) ~ '}' ~> (SwitchStmt(_, _))
+    "switch" ~ expression ~ "{" ~ optional(switchCases) ~ "}" ~> (SwitchStmt(_, _))
   }
   def switchCases = rule { oneOrMore(switchCase) }
   def switchCase = rule {
-    caseLabel ~ ';' ~> (SwitchCase(_, Seq.empty)) |
-    defaultLabel ~ ';' ~> (SwitchCase(_, Seq.empty)) |
+    caseLabel ~ ";" ~> (SwitchCase(_, Seq.empty)) |
+    defaultLabel ~ ";" ~> (SwitchCase(_, Seq.empty)) |
     caseLabel ~ statements ~> (SwitchCase(_, _)) |
     defaultLabel ~ statements ~> (SwitchCase(_, _))
   }
@@ -430,7 +458,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def caseItemList = rule {
     oneOrMore(pattern ~ optional(guardClause) ~> (CaseItem(_, _))).separatedBy(",")
   }
-  def defaultLabel = rule { "default" ~ ':' ~ push(DefaultLabel) }
+  def defaultLabel = rule { "default" ~ ":" ~ push(DefaultLabel) }
   def guardClause = rule { "where" ~ guardExpression }
   def guardExpression = expression
 
@@ -440,7 +468,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     statementLabel ~ loopStatement ~> (LabelStmtLoop(_, _)) |
     statementLabel ~ switchStatement ~> (LabelStmtSwitch(_,_))
   }
-  def statementLabel = rule { labelName ~ ':' }
+  def statementLabel = rule { labelName ~ ":" }
   def labelName = identifier
 
   // Control Transfer Statements
@@ -468,7 +496,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def declarations = rule { oneOrMore(declaration) }
 
   def declarationSpecifiers = rule { oneOrMore(declarationSpecifier) }
-  def declarationSpecifier = rule { valueMap(DeclSpec) }
+  def declarationSpecifier = rule { valueMap(DeclSpec) ~ ws }
 
   // Module Scope
 
@@ -476,24 +504,24 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Code Blocks
 
-  def codeBlock = rule { '{' ~ optional(statements) ~ '}' ~> ((stmts) => stmts.getOrElse(Seq.empty)) }
+  def codeBlock = rule { "{" ~ optional(statements) ~ "}" ~> ((stmts) => stmts.getOrElse(Seq.empty)) }
 
   // Import Declaration
 
   def importDeclaration = rule {
-    optional(attributes) ~ "import" ~ optional(importKind) ~ importPath ~> (
+    optional(attributes) ~ "import" ~ optional(importKind ~ ws) ~ importPath ~> (
       ImportDecl(_: Option[Seq[Attr]], _, _)
     )
   }
 
   def importKind = rule { valueMap(ImportKind) }
   def importPath: Rule1[ImportPath] = rule {
-    importPathIdentifier ~ '.' ~ importPath ~> ((id, path) => ImportPath(id, Some(path))) |
+    importPathIdentifier ~ "." ~ importPath ~> ((id, path) => ImportPath(id, Some(path))) |
     importPathIdentifier ~> (ImportPath(_: ImportPathId, None))
   }
   def importPathIdentifier: Rule1[ImportPathId] = rule {
-    identifier ~> (ImportPathIdId(_)) |
-    operator ~> (ImportPathIdOper(_))
+    identifier ~ ws ~> (ImportPathIdId(_)) |
+    operator ~ ws ~> (ImportPathIdOper(_))
   }
 
   // Constant Declaration
@@ -505,45 +533,45 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def patternInitializerList = rule { oneOrMore(patternInitializer).separatedBy(",") }
-  def patternInitializer = rule { pattern ~ optional(initializer) ~> (PatternInit(_, _)) }
-  def initializer = expression
+  def patternInitializer = rule { patternNonSwitch ~ optional(initializer ~ ws) ~> (PatternInit(_, _)) }
+  def initializer = rule { "=" ~ expression ~ ws }
 
   // Variable Declaration
 
-  def variableDeclaration = rule {
-    variableDeclarationHead ~ patternInitializerList ~> (VarDeclPattern(_, _)) |
+  def variableDeclaration: Rule1[VarDecl] = rule {
     variableDeclarationHead ~ variableName ~ typeAnnotation ~ optional(initializer) ~ willSetDidSetBlock ~> (
       VarDeclWillDidSet(_, _, _, _, _)
-    ) |
-    variableDeclarationHead ~ variableName ~ typeAnnotation ~ getterSetterKeywordBlock ~> (
-      VarDeclGetSetKey(_, _, _, _)
     ) |
     variableDeclarationHead ~ variableName ~ typeAnnotation ~ getterSetterBlock ~> (
       VarDeclGetSet(_, _, _, _)
     ) |
+    variableDeclarationHead ~ variableName ~ typeAnnotation ~ getterSetterKeywordBlock ~> (
+      VarDeclGetSetKey(_, _, _, _)
+    ) |
     variableDeclarationHead ~ variableName ~ typeAnnotation ~ codeBlock ~> (
       VarDeclCode(_, _, _, _)
-    )
+    ) |
+    variableDeclarationHead ~ patternInitializerList ~> (VarDeclPatt(_, _))
   }
 
   def variableDeclarationHead = rule {
     optional(attributes) ~ optional(declarationSpecifiers) ~ "var" ~> (VarDeclHead(_: Option[Seq[Attr]], _))
   }
-  def variableName = identifier
+  def variableName = rule { identifier ~ ws }
 
   def getterSetterBlock = rule {
-    getterClause ~ optional(setterClause) ~> (GetSetBlock(_, _)) |
-    setterClause ~ getterClause ~> ((s, g) => GetSetBlock(g, Some(s)))
+    "{" ~ getterClause ~ optional(setterClause) ~ "}" ~> (GetSetBlock(_, _)) |
+    "{" ~ setterClause ~ getterClause ~ "}" ~> ((s, g) => GetSetBlock(g, Some(s)))
   }
   def getterClause = rule { optional(attributes) ~ "get" ~ codeBlock ~> (GetClause(_, _)) }
   def setterClause = rule {
     optional(attributes) ~ "set" ~ optional(setterName) ~ codeBlock ~> (SetClause(_, _, _))
   }
-  def setterName = rule { '(' ~ identifier ~ ')' }
+  def setterName = rule { "(" ~ identifier ~ ws ~ ")" }
 
   def getterSetterKeywordBlock = rule {
-    getterKeywordClause ~ optional(setterKeywordClause) ~> (GetSetKeyBlock(_, _)) |
-    setterKeywordClause ~ getterKeywordClause ~> ((s, g) => GetSetKeyBlock(g, Some(s)))
+    "{" ~ getterKeywordClause ~ optional(setterKeywordClause) ~ "}" ~> (GetSetKeyBlock(_, _)) |
+    "{" ~ setterKeywordClause ~ getterKeywordClause ~ "}" ~> ((s, g) => GetSetKeyBlock(g, Some(s)))
   }
   def getterKeywordClause = rule {
     optional(attributes) ~ "get" ~> (GetSetKeyClause(_))
@@ -553,8 +581,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def willSetDidSetBlock = rule {
-    willSetClause ~ optional(didSetClause) ~> (WillDidSetBlock(_, _)) |
-    didSetClause ~ willSetClause ~> ((d, w) => WillDidSetBlock(w, Some(d)))
+    "{" ~ willSetClause ~ optional(didSetClause) ~ "}" ~> (WillDidSetBlock(_, _)) |
+    "{" ~ didSetClause ~ willSetClause ~ "}" ~> ((d, w) => WillDidSetBlock(w, Some(d)))
   }
   def willSetClause = rule {
     optional(attributes) ~ "willSet" ~ optional(setterName) ~ codeBlock ~> (
@@ -571,8 +599,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   def typealiasDeclaration = rule { typealiasHead ~ typealiasAssignment ~> (TypeAliasDecl(_, _)) }
   def typealiasHead = rule { "typealias" ~ typealiasName }
-  def typealiasName = identifier
-  def typealiasAssignment = rule { '=' ~ typ }
+  def typealiasName = rule { identifier ~ ws }
+  def typealiasAssignment = rule { "=" ~ typ }
 
   // Function Declaration
 
@@ -585,20 +613,20 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def functionHead = rule {
     optional(attributes) ~ optional(declarationSpecifiers) ~ "func" ~> (FuncHead(_, _))
   }
-  def functionName: Rule1[FuncName] = rule { identifier ~> (FuncNameId(_)) | operator ~> (FuncNameOper(_)) }
+  def functionName: Rule1[FuncName] = rule { identifier ~ ws ~> (FuncNameId(_)) | operator ~ ws ~> (FuncNameOper(_)) }
 
-  def functionSignature = rule { parameterClauses ~ optional(functionResult) ~> (FuncSig(_, _)) }
+  def functionSignature = rule { parameterClauses ~ optional(ws ~ functionResult) ~> (FuncSig(_, _)) }
   def functionResult = rule {
-    "->" ~ optional(attributes) ~ typ ~> (FuncResult(_, _))
+    "->" ~ optional(attributes) ~ typ ~ ws ~> (FuncResult(_, _))
   }
   def functionBody = codeBlock
 
   def parameterClauses = rule { oneOrMore(parameterClause) }
   def parameterClause = rule {
-    ('(' ~ ')' ~ push(ParamClause(Seq.empty, false))) |
-    '(' ~ parameterList ~ optional(capture("...")) ~ ')' ~> (ParamClause(_, _))
+    ("(" ~ ")" ~ ws ~ push(ParamClause(Seq.empty, false))) |
+    "(" ~ parameterList ~ optional(capture("...") ~ ws) ~ ")" ~> (ParamClause(_, _))
   }
-  def parameterList = rule { oneOrMore(parameter).separatedBy(",") }
+  def parameterList = rule { oneOrMore(parameter ~ ws).separatedBy(",") }
   def parameter: Rule1[Param] = rule {
     optional(capture("inout")) ~ "var" ~ optional(capture("#")) ~ parameterName ~
       optional(localParameterName) ~ typeAnnotation ~ optional(defaultArgumentClause) ~> (
@@ -610,9 +638,9 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
       ) |
     optional(attributes) ~ typ ~> (ParamAttr(_: Option[Seq[Attr]], _: Type))
   }
-  def parameterName: Rule1[ParamName] = rule { identifier ~> (ParamNameId(_)) | '_' ~ push(ParamNameIgnore) }
-  def localParameterName = parameterName
-  def defaultArgumentClause = rule { '=' ~ expression }
+  def parameterName: Rule1[ParamName] = rule { identifier ~ ws ~> (ParamNameId(_)) | "_" ~ push(ParamNameIgnore) }
+  def localParameterName = rule { parameterName }
+  def defaultArgumentClause = rule { "=" ~ expression }
 
   // Enumeration Declaration
 
@@ -621,7 +649,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def unionStyleEnum = rule {
-    enumName ~ optional(genericParameterClause) ~ ':' ~ '{' ~ optional(unionStyleEnumMembers) ~ '}' ~> (
+    enumName ~ optional(genericParameterClause) ~ ":" ~ "{" ~ optional(unionStyleEnumMembers) ~ "}" ~> (
       Enum(_, _, _, None)
     )
   }
@@ -635,12 +663,12 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
   def unionStyleEnumCaseList = rule { oneOrMore(unionStyleEnumCase).separatedBy(",") }
   def unionStyleEnumCase = rule { enumCaseName ~ optional(tupleType) ~> (UnionEnumCase(_, _)) }
-  def enumName = identifier
-  def enumCaseName = identifier
+  def enumName = rule { identifier ~ ws }
+  def enumCaseName = rule { identifier ~ ws }
 
   def rawValueStyleEnum = rule {
-    enumName ~ optional(genericParameterClause) ~ ':' ~ typeIdentifier ~
-      '{' ~ optional(rawValueStyleEnumMembers) ~ '}' ~> (
+    enumName ~ optional(genericParameterClause) ~ ":" ~ typeIdentifier ~
+      "{" ~ optional(rawValueStyleEnumMembers) ~ "}" ~> (
         (id, gen, typeId, members) => Enum(id, gen, members, Some(typeId))
       )
   }
@@ -654,7 +682,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
   def rawValueStyleEnumCaseList = rule { oneOrMore(rawValueStyleEnumCase).separatedBy(",") }
   def rawValueStyleEnumCase = rule { enumCaseName ~ optional(rawValueAssignment) ~> (RawValEnumCase(_, _)) }
-  def rawValueAssignment = rule { '=' ~ literal }
+  def rawValueAssignment = rule { "=" ~ literal }
 
   // Struct Declaration
 
@@ -663,7 +691,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
       optional(typeInheritanceClause) ~ structBody ~> (StructDecl(_, _, _, _, _))
   }
   def structName = identifier
-  def structBody = rule { '{' ~ optional(declarations) ~ '}' }
+  def structBody = rule { "{" ~ optional(declarations) ~ "}" }
 
   // Class Declaration
 
@@ -672,7 +700,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
       optional(typeInheritanceClause) ~ classBody ~> (ClassDecl(_, _, _, _, _))
   }
   def className = identifier
-  def classBody = rule { '{' ~ optional(declarations) ~ '}' }
+  def classBody = rule { "{" ~ optional(declarations) ~ "}" }
 
   // Protocol Declaration
 
@@ -682,7 +710,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     )
   }
   def protocolName = identifier
-  def protocolBody = rule { '{' ~ optional(protocolMemberDeclarations) ~ '}' }
+  def protocolBody = rule { "{" ~ optional(protocolMemberDeclarations) ~ "}" }
 
   def protocolMemberDeclaration: Rule1[ProtoMember] = rule {
     protocolPropertyDeclaration | protocolMemberDeclaration | protocolInitializerDeclaration |
@@ -738,7 +766,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def extensionDeclaration = rule {
     "extension" ~ typeIdentifier ~ typeInheritanceClause ~ extensionBody ~> (ExtDecl(_, _, _))
   }
-  def extensionBody = rule { '{' ~ optional(declarations) ~ '}' }
+  def extensionBody = rule { "{" ~ optional(declarations) ~ "}" }
 
   // Subscript Declaration
 
@@ -757,13 +785,13 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def prefixOperatorDeclaration = rule {
-    "operator" ~ "prefix" ~ operator ~ '{' ~ '}' ~> (PreOperDecl(_))
+    "operator" ~ "prefix" ~ operator ~ "{" ~ "}" ~> (PreOperDecl(_))
   }
   def postfixOperatorDeclaration = rule {
-    "operator" ~ "postfix" ~ operator ~ '{' ~ '}' ~> (PostOperDecl(_))
+    "operator" ~ "postfix" ~ operator ~ "{" ~ "}" ~> (PostOperDecl(_))
   }
   def infixOperatorDeclaration = rule {
-    "operator" ~ "infix" ~ operator ~ '{' ~ optional(infixOperatorAttributes) ~ '}' ~> (InfixOperDecl(_, _))
+    "operator" ~ "infix" ~ operator ~ "{" ~ optional(infixOperatorAttributes) ~ "}" ~> (InfixOperDecl(_, _))
   }
 
   def infixOperatorAttributes = rule {
@@ -777,37 +805,46 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   /// Attributes ///
 
   def attribute = rule {
-    '@' ~ attributeName ~ optional(attributeArgumentClause) ~> (Attr(_, _))
+    "@" ~ attributeName ~ optional(attributeArgumentClause) ~> (Attr(_, _))
   }
-  def attributeName = identifier
+  def attributeName = rule { identifier ~ ws }
   def attributeArgumentClause = rule { "(" ~ capture(optional(balancedTokens)) ~ ")" }
   def attributes = rule { oneOrMore(attribute) }
 
   def balancedTokens: Rule0 = rule { oneOrMore(balancedToken) }
   def balancedToken: Rule0 = rule {
-    '(' ~ optional(balancedTokens) ~ ')' |
-    '[' ~ optional(balancedTokens) ~ ']' |
-    '{' ~ optional(balancedTokens) ~ '}' |
+    "(" ~ optional(balancedTokens) ~ ")" |
+    "[" ~ optional(balancedTokens) ~ "]" |
+    "{" ~ optional(balancedTokens) ~ "}" |
     oneOrMore(!CharPredicate("()[]{}") ~ CharPredicate.All)
   }
 
   /// Patterns ///
 
-  def pattern: Rule1[Patt] = rule {
+  def patternLeft: Rule1[Patt] = rule {
     valueBindingPattern |
-    identifierPattern ~ optional(typeAnnotation) ~> ((i, t) => i.copy(typeAnn = t)) |
     wildcardPattern ~ optional(typeAnnotation) ~> ((w, t) => w.copy(typeAnn = t)) |
     tuplePattern ~ optional(typeAnnotation) ~> ((u, t) => u.copy(typeAnn = t)) |
-    enumCasePattern | typeCastingPattern | expressionPattern
+    isPattern |
+    enumCasePattern
+  }
+  def pattern: Rule1[Patt] = rule {
+    identifier ~ ws ~ "as" ~ typ ~> ((i, t) => TypeCastPattAs(IdPatt(i), t)) |
+    patternLeft ~ optional("as" ~ typ) ~> (
+      (left: Patt, right: Option[Type]) => right.map(TypeCastPattAs(left, _)).getOrElse(left)
+    ) |
+    expressionOrIdentifierOrAsPattern
+  }
+  def patternNonSwitch: Rule1[Patt] = rule {
+    valueBindingPattern |
+    wildcardPattern ~ optional(typeAnnotation) ~> ((w, t) => w.copy(typeAnn = t)) |
+    tuplePattern ~ optional(typeAnnotation) ~> ((u, t) => u.copy(typeAnn = t)) |
+    identifier ~ ws ~ optional(typeAnnotation) ~> (IdPatt(_, _))
   }
 
   // Wildcard Pattern
 
-  def wildcardPattern = rule { '_' ~ push(WildPatt()) }
-
-  // Identifier Pattern
-
-  def identifierPattern = rule { identifier ~> (IdPatt(_)) }
+  def wildcardPattern = rule { "_" ~ push(WildPatt()) }
 
   // Value-Binding Pattern
 
@@ -817,37 +854,64 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Tuple Pattern
 
-  def tuplePattern = rule { '(' ~ optional(tuplePatternElementList) ~ ')' ~> (TuplePatt(_)) }
+  def tuplePattern = rule { "(" ~ optional(tuplePatternElementList) ~ ws ~ ")" ~> (TuplePatt(_)) }
   def tuplePatternElementList = rule { oneOrMore(tuplePatternElement).separatedBy(",") }
-  def tuplePatternElement = pattern
+  def tuplePatternElement = rule { pattern ~ ws }
 
   // Enumeration Case Pattern
 
   def enumCasePattern = rule {
-    optional(typeIdentifier) ~ '.' ~ enumCaseName ~ optional(tuplePattern) ~> (EnumCasePatt(_, _, _))
+    // The type ID basically solves our normal enum-case-name issue inside it
+    &(typeName ~ ws ~ optional(genericArgumentClause ~ ws) ~ "." ~ typeName) ~ typeIdentifier ~ ws ~
+      optional(tuplePattern) ~> { (typeId, tuple) =>
+        // We have to take off the last sub, first result is the new type ID, second is last sub removed
+        def lastSub(id: TypeId): (Option[TypeId], TypeId) = id.sub.map({ t =>
+          val (newId, lastId) = lastSub(t)
+          Some(id.copy(sub = newId)) -> lastId
+        }).getOrElse(None -> id)
+        // We know new one exists and last will exist because of pre-check, just make sure
+        //  that the last one doesn't have a generic arg clause
+        val (newId, lastId) = lastSub(typeId)
+        lastId.gen.map(g => sys.error("Invalid trailing generic: " + g))
+        EnumCasePatt(newId, lastId.id, tuple)
+    } |
+    "." ~ enumCaseName ~ optional(tuplePattern) ~> (EnumCasePatt(None, _, _))
   }
 
   // Type-Casting Pattern
 
-  def typeCastingPattern: Rule1[TypeCastPatt] = rule { isPattern | asPattern }
   def isPattern = rule { "is" ~ typ ~> (TypeCastPattIs(_)) }
-  def asPattern = rule { pattern ~ "as" ~ typ ~> (TypeCastPattAs(_, _)) }
 
   // Expression Pattern
+  // Identifier Pattern
 
-  def expressionPattern = rule { expression ~> (ExprPatt(_)) }
+  def expressionOrIdentifierOrAsPattern: Rule1[Patt] = rule {
+    identifier ~ ws ~ typeAnnotation ~> ((i, t) => IdPatt(i, Some(t))) |
+    expression ~> ((e: Expr) =>
+      e match {
+        // A regular ID is a different pattern
+        case Expr(PreExprOper(None, PostExprPrim(PrimExprId(i, None))), s) if s.isEmpty => IdPatt(i)
+        // If the last binary expression is an "as", we have to send back a different pattern
+        case e => e.exprs.lastOption.flatMap({
+          case BinExprCast(TypeCastOperAs(false, t)) =>
+            Some(TypeCastPattAs(ExprPatt(e.copy(exprs = e.exprs.dropRight(1))), t))
+          case _ => None
+        }).getOrElse(ExprPatt(e))
+      }
+    )
+  }
 
   /// Generic Parameters and Arguments ///
 
   // Generic Parameter Clause
 
   def genericParameterClause = rule {
-    '<' ~ genericParameterList ~ optional(requirementClause) ~ '>' ~> (GenParamClause(_, _))
+    "<" ~ genericParameterList ~ optional(requirementClause) ~ ">" ~> (GenParamClause(_, _))
   }
   def genericParameterList = rule { oneOrMore(genericParameter).separatedBy(",") }
   def genericParameter: Rule1[GenParam] = rule {
-    typeName ~ ':' ~ protocolCompositionType ~> (GenParamProto(_, _)) |
-    typeName ~ ':' ~ typeIdentifier ~> (GenParamType(_, _)) |
+    typeName ~ ":" ~ protocolCompositionType ~> (GenParamProto(_, _)) |
+    typeName ~ ":" ~ typeIdentifier ~> (GenParamType(_, _)) |
     typeName ~> (GenParamPlain(_))
   }
 
@@ -856,8 +920,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def requirement: Rule1[Req] = rule { conformanceRequirement | sameTypeRequirement }
 
   def conformanceRequirement: Rule1[ConfReq] = rule {
-    typeIdentifier ~ ':' ~ typeIdentifier ~> (ConfReqType(_, _)) |
-    typeIdentifier ~ ':' ~ protocolCompositionType ~> (ConfReqProto(_, _))
+    typeIdentifier ~ ":" ~ typeIdentifier ~> (ConfReqType(_, _)) |
+    typeIdentifier ~ ":" ~ protocolCompositionType ~> (ConfReqProto(_, _))
   }
   def sameTypeRequirement = rule { typeIdentifier ~ "==" ~ typeIdentifier ~> (SameReq(_, _)) }
 
@@ -871,6 +935,5 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   implicit def unwrapOptionSeq[T](opt: Option[Seq[T]]): Seq[T] = opt.getOrElse(Seq.empty[T])
   implicit def optionToBool(opt: Option[_]): Boolean = opt.isDefined
-  //implicit def valueMap[T](m: Map[String, T])(implicit h: HListable[T]): RuleN[h.Out] = `n/a`
   implicit def enumToMap[T <: EnumObj](enum: T): Map[String, T#EnumVal] = enum.byName
 }

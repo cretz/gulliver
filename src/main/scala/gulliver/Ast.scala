@@ -58,6 +58,7 @@ object Ast {
   // Type Annotations
 
   case class TypeAnn(attrs: Seq[Attr], typ: Type)
+  implicit def stringToTypeAnn(str: String): TypeAnn = TypeAnn(Seq.empty, str)
 
   // Type Identifier
   case class TypeId(id: Id, gen: Option[GenArgClause] = None, sub: Option[TypeId] = None) extends Type
@@ -101,6 +102,8 @@ object Ast {
 
   case class Expr(pre: PreExpr, exprs: Seq[BinExpr] = Seq.empty)
   implicit def stringToExpr(id: String): Expr = Expr(id)
+  implicit def preExprToExpr(pre: PreExpr): Expr = Expr(pre)
+  implicit def postExprToExpr(pre: PostExpr): Expr = Expr(pre)
 
   // Prefix Expressions
 
@@ -187,7 +190,7 @@ object Ast {
   val PostExprTmp = PostExprPrim("__placeholder__")
 
   sealed trait FuncCallExpr extends PostExpr
-  case class FuncCallExprPlain(expr: PostExpr, params: ParenExpr) extends FuncCallExpr
+  case class FuncCallExprPlain(expr: PostExpr, params: ParenExpr = ParenExpr(Seq.empty)) extends FuncCallExpr
   case class FuncCallExprBlock(expr: PostExpr, params: Option[ParenExpr], block: ClosureExpr) extends FuncCallExpr
 
   case class InitExpr(expr: PostExpr) extends PostExpr
@@ -211,7 +214,9 @@ object Ast {
 
   sealed trait Stmt
   case class ExprStmt(expr: Expr) extends Stmt
+  implicit def exprToStmt(expr: Expr): Stmt = ExprStmt(expr)
   case class DeclStmt(decl: Decl) extends Stmt
+  implicit def declToStmt(decl: Decl): Stmt = DeclStmt(decl)
 
   // Loop Statements
 
@@ -287,7 +292,7 @@ object Ast {
 
   // Module Scope
 
-  case class TopLevelDecl(stmts: Seq[Stmt]) extends Decl
+  case class TopLevelDecl(stmts: Seq[Stmt])
 
   // Import Declaration
 
@@ -303,8 +308,9 @@ object Ast {
     val Var = EnumVal("var")
     val Func = EnumVal("func")
   }
-  case class ImportPath(pathId: ImportPathId, sub: Option[ImportPath])
+  case class ImportPath(pathId: ImportPathId, sub: Option[ImportPath] = None)
   sealed trait ImportPathId
+  implicit def stringToImportPathId(str: String): ImportPathId = ImportPathIdId(str)
   case class ImportPathIdId(id: Id) extends ImportPathId
   case class ImportPathIdOper(oper: Oper) extends ImportPathId
 
@@ -316,18 +322,18 @@ object Ast {
   // Variable Declaration
 
   sealed trait VarDecl extends Decl
-  case class VarDeclPattern(head: VarDeclHead, exprs: Seq[PatternInit]) extends VarDecl
+  case class VarDeclPatt(head: VarDeclHead, exprs: Seq[PatternInit]) extends VarDecl
   case class VarDeclCode(head: VarDeclHead, id: Id, typeAnn: TypeAnn, stmts: Seq[Stmt]) extends VarDecl
   case class VarDeclGetSet(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetBlock) extends VarDecl
   case class VarDeclGetSetKey(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetKeyBlock) extends VarDecl
   case class VarDeclWillDidSet(head: VarDeclHead, id: Id, typeAnn: TypeAnn,
     expr: Option[Expr], block: WillDidSetBlock) extends VarDecl
-  case class VarDeclHead(attrs: Seq[Attr], specs: Seq[DeclSpec])
+  case class VarDeclHead(attrs: Seq[Attr] = Seq.empty, specs: Seq[DeclSpec] = Seq.empty)
   case class GetSetBlock(get: GetClause, set: Option[SetClause])
   case class GetClause(attrs: Seq[Attr], stmts: Seq[Stmt])
   case class SetClause(attrs: Seq[Attr], id: Option[Id], stmts: Seq[Stmt])
   case class GetSetKeyBlock(getKeys: GetSetKeyClause, setKeys: Option[GetSetKeyClause])
-  case class GetSetKeyClause(attrs: Seq[Attr])
+  case class GetSetKeyClause(attrs: Seq[Attr] = Seq.empty)
   case class WillDidSetBlock(will: WillDidSetClause, did: Option[WillDidSetClause])
   case class WillDidSetClause(attrs: Seq[Attr], id: Option[Id], stmts: Seq[Stmt])
 
@@ -341,6 +347,7 @@ object Ast {
     sig: FuncSig, stmts: Seq[Stmt]) extends Decl
   case class FuncHead(attrs: Seq[Attr], specs: Seq[DeclSpec])
   sealed trait FuncName
+  implicit def stringToFuncName(str: String): FuncName = FuncNameId(str)
   case class FuncNameId(id: Id) extends FuncName
   case class FuncNameOper(oper: Oper) extends FuncName
   case class FuncSig(paramClauses: Seq[ParamClause], res: Option[FuncResult])
@@ -351,6 +358,7 @@ object Ast {
     name: ParamName, localName: Option[ParamName], typeAnn: TypeAnn, default: Option[Expr]) extends Param
   case class ParamAttr(attrs: Seq[Attr], typ: Type) extends Param
   sealed trait ParamName
+  implicit def stringToParamName(str: String): ParamName = ParamNameId(str)
   case class ParamNameId(id: Id) extends ParamName
   case object ParamNameIgnore extends ParamName
 
@@ -430,6 +438,7 @@ object Ast {
   /// Patterns
 
   sealed trait Patt
+  implicit def stringToPatt(str: String): Patt = IdPatt(str)
 
   // Wildcard Pattern
 
@@ -438,6 +447,7 @@ object Ast {
   // Identifier Pattern
 
   case class IdPatt(id: Id, typeAnn: Option[TypeAnn] = None) extends Patt
+  implicit def stringToIdPatt(str: String): IdPatt = IdPatt(str)
 
   // Value-Binding Pattern
 
@@ -451,7 +461,7 @@ object Ast {
 
   // Enumeration Case Pattern
 
-  case class EnumCasePatt(typeId: Option[TypeId], id: Id, tuple: Option[TuplePatt]) extends Patt
+  case class EnumCasePatt(typeId: Option[TypeId], id: Id, tuple: Option[TuplePatt] = None) extends Patt
 
   // Type-Casting Pattern
 
@@ -467,8 +477,9 @@ object Ast {
 
   // Generic Parameter Clause
 
-  case class GenParamClause(params: Seq[GenParam], reqs: Seq[Req])
+  case class GenParamClause(params: Seq[GenParam], reqs: Seq[Req] = Seq.empty)
   sealed trait GenParam
+  implicit def stringToGenParam(str: String): GenParam = GenParamPlain(str)
   case class GenParamPlain(id: Id) extends GenParam
   case class GenParamType(id: Id, typeId: TypeId) extends GenParam
   case class GenParamProto(id: Id, proto: ProtoCompType) extends GenParam
