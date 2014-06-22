@@ -3,15 +3,19 @@ package gulliver
 import scala.language.implicitConversions
 
 object Ast {
-  // Please keep in order of spec
+
+  case class Pos(start: Int, end: Int)
+  sealed trait Node {
+    val pos: Pos
+  }
 
   /// Lexical Structure ///
 
   // Whitespace and Comments
 
-  sealed trait Comment
-  case class SingleLineComment(value: String) extends Comment
-  case class MultilineComment(value: String) extends Comment
+  sealed trait Comment extends Node
+  case class SingleLineComment(value: String)(implicit val pos: Pos) extends Comment
+  case class MultilineComment(value: String)(implicit val pos: Pos) extends Comment
 
   // Identifiers
 
@@ -31,8 +35,8 @@ object Ast {
   case class HexLit(value: String) extends IntLit
 
   sealed trait FloatLit extends Lit
-  case class DecimalFloat(value: String, frac: Option[String], exp: Option[String]) extends FloatLit
-  case class HexFloat(value: String, frac: Option[String], exp: Option[String]) extends FloatLit
+  case class DecimalFloat(value: String, frac: Option[String], exp: Option[String] = None) extends FloatLit
+  case class HexFloat(value: String, frac: Option[String], exp: Option[String] = None) extends FloatLit
 
   case class StringLit(items: Seq[TextItem]) extends Lit
   sealed trait TextItem
@@ -104,6 +108,7 @@ object Ast {
   case class PreExprOper(oper: Option[Oper], expr: PostExpr) extends PreExpr
   case class PreExprInOut(id: Id) extends PreExpr
   implicit def stringToPreExprOper(prim: String): PreExprOper = PreExprOper(None, prim)
+  implicit def postExprToPreExprOper(expr: PostExpr): PreExprOper = PreExprOper(None, expr)
 
   // Binary Expressions
 
@@ -113,6 +118,7 @@ object Ast {
   case class BinExprCond(oper: CondOper, expr: PreExpr) extends BinExpr
   case class BinExprCast(oper: TypeCastOper) extends BinExpr
   case class CondOper(expr: Expr)
+  implicit def stringToCondOper(str: String): CondOper = CondOper(str)
   sealed trait TypeCastOper
   case class TypeCastOperIs(typ: Type) extends TypeCastOper
   case class TypeCastOperAs(option: Boolean, typ: Type) extends TypeCastOper
@@ -128,12 +134,14 @@ object Ast {
   case class LitExprArray(lit: ArrayLit) extends LitExpr
   case class LitExprDict(lit: DictLit) extends LitExpr
   sealed trait LitExprSpecial extends LitExpr
-  object LitExprSpecial extends EnumObj[LitExprSpecial] {
-    case object File extends EnumVal("__FILE__") with LitExprSpecial
-    case object Line extends EnumVal("__LINE__") with LitExprSpecial
-    case object Column extends EnumVal("__COLUMN__") with LitExprSpecial
-    case object Function extends EnumVal("__FUNCTION__") with LitExprSpecial
+  object LitExprSpecial extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with LitExprSpecial
+    val File = EnumVal("__FILE__")
+    val Line = EnumVal("__LINE__")
+    val Column = EnumVal("__COLUMN__")
+    val Function = EnumVal("__FUNCTION__")
   }
+
   case class ArrayLit(exprs: Seq[Expr])
   case class DictLit(exprs: Seq[(Expr, Expr)])
 
@@ -153,11 +161,12 @@ object Ast {
     res: Option[FuncResult], capList: Option[CaptureList])
   case class CaptureList(spec: CaptureSpec, expr: Expr)
   sealed trait CaptureSpec
-  object CaptureSpec extends EnumObj[CaptureSpec] {
-    case object Weak extends EnumVal("weak") with CaptureSpec
-    case object Unowned extends EnumVal("unowned") with CaptureSpec
-    case object UnownedSafe extends EnumVal("unowned(safe)") with CaptureSpec
-    case object UnownedUnsafe extends EnumVal("unowned(unsafe)") with CaptureSpec
+  object CaptureSpec extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with CaptureSpec
+    val Weak = EnumVal("weak")
+    val Unowned = EnumVal("unowned")
+    val UnownedSafe = EnumVal("unowned(safe)")
+    val UnownedUnsafe = EnumVal("unowned(unsafe)")
   }
 
   case class ImplicitMemberExpr(id: Id) extends PrimExpr
@@ -175,6 +184,7 @@ object Ast {
   case class PostExprPrim(expr: PrimExpr) extends PostExpr
   case class PostExprOper(expr: PostExpr, oper: Oper) extends PostExpr
   implicit def stringToPostExprPrim(prim: String): PostExprPrim = PostExprPrim(prim)
+  val PostExprTmp = PostExprPrim("__placeholder__")
 
   sealed trait FuncCallExpr extends PostExpr
   case class FuncCallExprPlain(expr: PostExpr, params: ParenExpr) extends FuncCallExpr
@@ -184,7 +194,8 @@ object Ast {
 
   sealed trait ExplicitMemberExpr extends PostExpr
   case class ExplicitMemberExprDigit(expr: PostExpr, digit: Char) extends ExplicitMemberExpr
-  case class ExplicitMemberExprId(expr: PostExpr, id: Id, generics: Option[GenArgClause]) extends ExplicitMemberExpr
+  case class ExplicitMemberExprId(expr: PostExpr, id: Id,
+    generics: Option[GenArgClause] = None) extends ExplicitMemberExpr
 
   case class PostSelfExpr(expr: PostExpr) extends PostExpr
 
@@ -261,16 +272,17 @@ object Ast {
 
   sealed trait Decl
   sealed trait DeclSpec
-  object DeclSpec extends EnumObj[DeclSpec] {
-    case object Class extends EnumVal("class") with DeclSpec
-    case object Mut extends EnumVal("mutating") with DeclSpec
-    case object NonMut extends EnumVal("nonmutating") with DeclSpec
-    case object Override extends EnumVal("override") with DeclSpec
-    case object Static extends EnumVal("static") with DeclSpec
-    case object Unowned extends EnumVal("unowned") with DeclSpec
-    case object UnownedSafe extends EnumVal("unowned(safe)") with DeclSpec
-    case object UnownedUnsafe extends EnumVal("unowned(unsafe)") with DeclSpec
-    case object Weak extends EnumVal("weak") with DeclSpec
+  object DeclSpec extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with DeclSpec
+    val Class = EnumVal("class")
+    val Mut = EnumVal("mutating")
+    val NonMut = EnumVal("nonmutating")
+    val Override = EnumVal("override")
+    val Static = EnumVal("static")
+    val Unowned = EnumVal("unowned")
+    val UnownedSafe = EnumVal("unowned(safe)")
+    val UnownedUnsafe = EnumVal("unowned(unsafe)")
+    val Weak = EnumVal("weak")
   }
 
   // Module Scope
@@ -281,14 +293,15 @@ object Ast {
 
   case class ImportDecl(attrs: Seq[Attr], kind: Option[ImportKind], path: ImportPath) extends Decl
   sealed trait ImportKind
-  object ImportKind extends EnumObj[ImportKind] {
-    case object TypeAlias extends EnumVal("typealias") with ImportKind
-    case object Struct extends EnumVal("struct") with ImportKind
-    case object Class extends EnumVal("class") with ImportKind
-    case object Enum extends EnumVal("enum") with ImportKind
-    case object Protocol extends EnumVal("protocol") with ImportKind
-    case object Var extends EnumVal("var") with ImportKind
-    case object Func extends EnumVal("func") with ImportKind
+  object ImportKind extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with ImportKind
+    val TypeAlias = EnumVal("typealias")
+    val Struct = EnumVal("struct")
+    val Class = EnumVal("class")
+    val Enum = EnumVal("enum")
+    val Protocol = EnumVal("protocol")
+    val Var = EnumVal("var")
+    val Func = EnumVal("func")
   }
   case class ImportPath(pathId: ImportPathId, sub: Option[ImportPath])
   sealed trait ImportPathId
@@ -403,10 +416,11 @@ object Ast {
   case class InfixOperDecl(oper: Oper, attrs: Option[InfixOperAttrs]) extends OperDecl
   case class InfixOperAttrs(prec: Option[Short], assoc: Option[Assoc])
   sealed trait Assoc
-  object Assoc extends EnumObj[Assoc] {
-    case object Left extends EnumVal("left") with Assoc
-    case object Right extends EnumVal("right") with Assoc
-    case object None extends EnumVal("none") with Assoc
+  object Assoc extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with Assoc
+    val Left = EnumVal("left")
+    val Right = EnumVal("right")
+    val None = EnumVal("none")
   }
 
   /// Attributes ///
@@ -470,16 +484,10 @@ object Ast {
 
   // Helpers
 
-  trait EnumObj[T] {
-    var _vals = Map.empty[String, EnumVal with T]
-    def vals = _vals
-    var _enums = Map.empty[EnumVal with T, String]
-    def enums = _enums
-
-    abstract class EnumVal(val name: String) { this: T =>
-      _vals += (name -> this)
-      _enums += (this -> name)
-      override def toString(): String = name
+  abstract class EnumObj extends Enumeration {
+    type EnumVal <: Val
+    lazy val byName: Map[String, EnumVal] = {
+      values.toList.map(v => v.toString -> v.asInstanceOf[EnumVal]).toMap
     }
   }
 }

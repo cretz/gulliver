@@ -3,9 +3,12 @@ package gulliver
 import org.parboiled2._
 import Ast._
 import scala.language.implicitConversions
+import shapeless._
 
 class Parser(val input: ParserInput) extends org.parboiled2.Parser {
-  // Try to stay in order with the spec
+
+  implicit def currPos: Pos = Pos(valueStack.pop().asInstanceOf[Int], cursor)
+  def pos: Rule0 = rule { run { valueStack.push(cursor) } }
 
   /// Lexical Structure ///
 
@@ -13,18 +16,17 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   val wsChar = CharPredicate(" \r\n\t\13\f\0")
   def ws = rule { zeroOrMore(wsChar) }
-//  def wsSafe(c: Char): Rule0 = rule { c ~ ws }
-  def eol = rule { CharPredicate("\r\n") | "\r\n" }
+  def eol = rule { CharPredicate("\r\n") | str("\r\n") }
   implicit def wsStr(s: String): Rule0 = rule { str(s) ~ ws }
 
-  def singleLineComment = rule { str("//") ~ capture(zeroOrMore(!eol ~ ANY)) ~> (SingleLineComment(_)) }
+  def singleLineComment = rule { pos ~ str("//") ~ capture(zeroOrMore(!eol ~ ANY)) ~> (SingleLineComment(_)) }
   def multilineCommentChars = rule { capture(oneOrMore(!str("/*") ~ !str("*/") ~ ANY)) }
   def multilineCommentBody: Rule1[String] = rule {
     str("/*") ~ oneOrMore(multilineCommentBody | multilineCommentChars) ~ str("*/") ~>
       ("/*" + (_: Seq[String]).mkString + "*/")
   }
   def multilineComment = rule {
-    multilineCommentBody ~> ((s: String) => MultilineComment(s.substring(2, s.length - 2)))
+    pos ~ multilineCommentBody ~> ((s: String) => MultilineComment(s.substring(2, s.length - 2)))
   }
 
   // Identifiers
@@ -80,7 +82,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def octalLiteralChar = rule { octalDigit | '_' }
   def octalLiteralChars = rule { oneOrMore(octalLiteralChar) }
 
-  def decimalLiteral = rule { decimalLiteralChars }
+  // TODO: How to better tell whether it's standalone wildcard
+  def decimalLiteral = rule { !ch('_') ~ decimalLiteralChars }
   val decimalDigit = CharPredicate.Digit
   def decimalDigits = rule { oneOrMore(decimalDigit) }
   def decimalLiteralChar = rule { decimalDigit | '_' }
@@ -139,7 +142,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def operator = rule { capture(oneOrMore(operatorChar)) ~> (Oper(_))}
   val operatorChar = CharPredicate('/', '=', '-', '+', '!', '*', '%', '<', '>', '&', '|', '^', '~', '.')
   def binaryOperator = rule { operator ~ ws }
-  def prefixOperator = operator
+  // TODO: How to tell difference between prefix "." oper and implicit member expression?
+  def prefixOperator = rule { !('.' ~ !operatorChar) ~ operator }
   def postfixOperator = rule { operator ~ ws }
 
   /// Types ///
@@ -151,12 +155,12 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def typ: Rule1[Type] = rule {
     typBase ~ ws ~
     zeroOrMore(
-      (oneOrMore(capture("[") ~ "]") ~> ((s: Seq[String]) => ArrayType(TypeTmp, s.size))) |
-      ("->" ~ typ ~> (FuncType(TypeTmp, _))) |
-      ('?' ~ push(OptType(TypeTmp))) |
-      ('!' ~ push(ImplicitOptType(TypeTmp))) |
-      ("." ~ "Type" ~ push(MetaTypeType(TypeTmp))) |
-      ("." ~ "Protocol" ~ push(MetaTypeProto(TypeTmp)))
+      oneOrMore(capture("[") ~ "]") ~> ((s: Seq[String]) => ArrayType(TypeTmp, s.size)) |
+      "->" ~ typ ~> (FuncType(TypeTmp, _)) |
+      '?' ~ push(OptType(TypeTmp)) |
+      '!' ~ push(ImplicitOptType(TypeTmp)) |
+      "." ~ "Type" ~ push(MetaTypeType(TypeTmp)) |
+      "." ~ "Protocol" ~ push(MetaTypeProto(TypeTmp))
     ) ~> (
       (base: Type, right: Seq[Type]) =>
         right.foldLeft(base) { (left: Type, right: Type) =>
@@ -238,8 +242,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Binary Expressions
 
   def binaryExpression: Rule1[BinExpr] = rule {
-    binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
     assignmentOperator ~ ws ~ prefixExpression ~> (BinExprAssign(_)) |
+    binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
     conditionalOperator ~ prefixExpression ~> (BinExprCond(_, _)) |
     typeCastingOperator ~> (BinExprCast(_))
   }
@@ -263,10 +267,10 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def literalExpression: Rule1[LitExpr] = rule {
+    valueMap(LitExprSpecial) |
     literal ~> (LitExprLit(_)) |
     arrayLiteral ~> (LitExprArray(_)) |
-    dictionaryLiteral ~> (LitExprDict(_)) |
-    valueMap(LitExprSpecial.vals)
+    dictionaryLiteral ~> (LitExprDict(_))
   }
   def arrayLiteral = rule { "[" ~ optional(arrayLiteralItems) ~ "]" ~> (ArrayLit(_)) }
   def arrayLiteralItems = rule { oneOrMore(arrayLiteralItem).separatedBy(",") ~ optional(",") }
@@ -307,7 +311,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     )
   }
   def captureList = rule { "[" ~ captureSpecifier ~ expression ~ "]" ~> (CaptureList(_, _)) }
-  def captureSpecifier = rule { valueMap(CaptureSpec.vals) }
+  def captureSpecifier = rule { valueMap(CaptureSpec) }
 
   def implicitMemberExpression = rule { "." ~ identifier ~> (ImplicitMemberExpr(_)) }
 
@@ -323,39 +327,40 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Postfix Expressions
 
   def postfixExpression: Rule1[PostExpr] = rule {
-    primaryExpression ~> (PostExprPrim(_)) |
-    postfixExpression ~ postfixOperator ~> (PostExprOper(_, _)) |
-    functionCallExpression | initializerExpression | explicitMemberExpression |
-    postfixSelfExpression | dynamicTypeExpression | subscriptExpression |
-    forcedValueExpression | optionalChainingExpression
+    (primaryExpression ~> (PostExprPrim(_))) ~
+    zeroOrMore(
+      optional(parenthesizedExpression) ~ closureExpression ~> (FuncCallExprBlock(PostExprTmp, _, _)) |
+      parenthesizedExpression ~> (FuncCallExprPlain(PostExprTmp, _)) |
+      "." ~ "init" ~ push(InitExpr(PostExprTmp)) |
+      "." ~ "self" ~ push(PostSelfExpr(PostExprTmp)) |
+      "." ~ "dynamicType" ~ push(DynTypeExpr(PostExprTmp)) |
+      "." ~ capture(decimalDigit) ~> (str => ExplicitMemberExprDigit(PostExprTmp, str.head)) |
+      "." ~ identifier ~ optional(genericArgumentClause) ~> (ExplicitMemberExprId(PostExprTmp, _, _)) |
+      "[" ~ expressionList ~ "]" ~> (SubExpr(PostExprTmp, _)) |
+      "!" ~ push(ForceValExpr(PostExprTmp)) |
+      // TODO: Is there a better way for this to not prematurely match a conditional expression
+      !conditionalOperator ~ "?" ~ push(OptChainExpr(PostExprTmp)) |
+      postfixOperator ~ !expression ~> (PostExprOper(PostExprTmp, _))
+    ) ~> (
+      (base: PostExpr, right: Seq[PostExpr]) =>
+        right.foldLeft(base) { (left: PostExpr, right: PostExpr) =>
+          right match {
+            case r: FuncCallExprBlock => r.copy(expr = left)
+            case r: FuncCallExprPlain => r.copy(expr = left)
+            case r: InitExpr => r.copy(expr = left)
+            case r: PostSelfExpr => r.copy(expr = left)
+            case r: DynTypeExpr => r.copy(expr = left)
+            case r: ExplicitMemberExprDigit => r.copy(expr = left)
+            case r: ExplicitMemberExprId => r.copy(expr = left)
+            case r: SubExpr => r.copy(expr = left)
+            case r: ForceValExpr => r.copy(expr = left)
+            case r: OptChainExpr => r.copy(expr = left)
+            case r: PostExprOper => r.copy(expr = left)
+            case _ => ???
+          }
+        }
+    )
   }
-
-  def functionCallExpression: Rule1[FuncCallExpr] = rule {
-    postfixExpression ~ optional(parenthesizedExpression) ~ trailingClosure ~> (FuncCallExprBlock(_, _, _)) |
-    postfixExpression ~ parenthesizedExpression ~> (FuncCallExprPlain(_, _))
-  }
-  def trailingClosure = closureExpression
-
-  def initializerExpression = rule { postfixExpression ~ "." ~ "init" ~> (InitExpr(_)) }
-
-  def explicitMemberExpression: Rule1[ExplicitMemberExpr] = rule {
-    postfixExpression ~ "." ~ capture(decimalDigit) ~> (
-      (expr, str) => ExplicitMemberExprDigit(expr, str.head)
-    ) |
-    postfixExpression ~ "." ~ identifier ~ optional(genericArgumentClause) ~> (ExplicitMemberExprId(_, _, _))
-  }
-
-  def postfixSelfExpression = rule { postfixExpression ~ "." ~ "self" ~> (PostSelfExpr(_)) }
-
-  def dynamicTypeExpression = rule { postfixExpression ~ "." ~ "dynamicType" ~> (DynTypeExpr(_)) }
-
-  def subscriptExpression = rule {
-    postfixExpression ~ "[" ~ expressionList ~ "]" ~> (SubExpr(_, _))
-  }
-
-  def forcedValueExpression = rule { postfixExpression ~ "!" ~> (ForceValExpr(_)) }
-
-  def optionalChainingExpression = rule { postfixExpression ~ "?" ~> (OptChainExpr(_)) }
 
   /// Statements ///
 
@@ -366,7 +371,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     labeledStatement ~ semi | controlTransferStatement ~ semi
   }
   def statements = rule { oneOrMore(statement) }
-  def semi = rule { optional(';') }
+  def semi = rule { optional(";") }
 
   // Loop Statements
 
@@ -463,7 +468,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def declarations = rule { oneOrMore(declaration) }
 
   def declarationSpecifiers = rule { oneOrMore(declarationSpecifier) }
-  def declarationSpecifier = rule { valueMap(DeclSpec.vals) }
+  def declarationSpecifier = rule { valueMap(DeclSpec) }
 
   // Module Scope
 
@@ -481,7 +486,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     )
   }
 
-  def importKind = rule { valueMap(ImportKind.vals) }
+  def importKind = rule { valueMap(ImportKind) }
   def importPath: Rule1[ImportPath] = rule {
     importPathIdentifier ~ '.' ~ importPath ~> ((id, path) => ImportPath(id, Some(path))) |
     importPathIdentifier ~> (ImportPath(_: ImportPathId, None))
@@ -767,7 +772,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def precedenceClause = rule { "precedence" ~ precedenceLevel }
   def precedenceLevel = rule { capture(3.times(CharPredicate.Digit)) ~> (_.toShort) }
   def associativityClause = rule { "associativity" ~ associativity }
-  def associativity = rule { valueMap(Assoc.vals) }
+  def associativity = rule { valueMap(Assoc) }
 
   /// Attributes ///
 
@@ -858,7 +863,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Generic Argument Clause
 
-  def genericArgumentClause = rule { '<' ~ genericArgumentList ~ '>' ~> (GenArgClause(_)) }
+  def genericArgumentClause = rule { "<" ~ genericArgumentList ~ ">" ~> (GenArgClause(_)) }
   def genericArgumentList = rule { oneOrMore(genericArgument).separatedBy(",") }
   def genericArgument = typ
 
@@ -866,4 +871,6 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   implicit def unwrapOptionSeq[T](opt: Option[Seq[T]]): Seq[T] = opt.getOrElse(Seq.empty[T])
   implicit def optionToBool(opt: Option[_]): Boolean = opt.isDefined
+  //implicit def valueMap[T](m: Map[String, T])(implicit h: HListable[T]): RuleN[h.Out] = `n/a`
+  implicit def enumToMap[T <: EnumObj](enum: T): Map[String, T#EnumVal] = enum.byName
 }
