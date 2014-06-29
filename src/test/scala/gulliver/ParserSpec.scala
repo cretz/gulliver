@@ -123,11 +123,93 @@ class ParserSpec extends GulliverSpec {
   it should "handle statements" in {
     def assertStmt(str: String, result: Stmt): Unit = str parsedWith(_.statement.run()) should be(result)
     assertStmt("foo·(·bar·)·;", Expr(FuncCallExprPlain("foo", ParenExpr(ExprElemExpr("bar")))))
-    // TODO: declaration
-//    assertStmt("for var i = 0; i < 10; i++ { println(i) }") should be(
-//      ForStmt(ForInitDecl())
-//    )
-//    println("for var i = 0; i < 10; i++ { println(i) }" parsedWith(_.statement.run()))
+    assertStmt("for·;·;·{·}", ForStmt(None, None, None, Seq.empty))
+    assertStmt("for var foo·=·0·;·foo·<·10·;·foo++ {·bar·(·)·}",
+      ForStmt(
+        ForInitDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("foo"),
+          Some(Expr(PostExprPrim(LitExprLit(DecimalLit("0")))))))),
+        Expr("foo", BinExprBin("<", PostExprPrim(LitExprLit(DecimalLit("10"))))),
+        Expr(PostExprOper("foo", Oper("++"))),
+        ExprStmt(FuncCallExprPlain("bar"))
+      )
+    )
+    assertStmt("for·(·var foo·=·0·;·foo·<·10·;·foo++·)·{·bar·(·)·}",
+      ForStmt(
+        ForInitDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("foo"),
+          Some(Expr(PostExprPrim(LitExprLit(DecimalLit("0")))))))),
+        Expr("foo", BinExprBin("<", PostExprPrim(LitExprLit(DecimalLit("10"))))),
+        Expr(PostExprOper("foo", Oper("++"))),
+        ExprStmt(FuncCallExprPlain("bar"))
+      )
+    )
+    assertStmt("for var·foo·=·0·;·foo·<·10·;·foo·(·)·{·bar·(·)·}",
+      ForStmt(
+        ForInitDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("foo"),
+          Some(Expr(PostExprPrim(LitExprLit(DecimalLit("0")))))))),
+        Expr("foo", BinExprBin("<", PostExprPrim(LitExprLit(DecimalLit("10"))))),
+        Expr(FuncCallExprPlain("foo")),
+        ExprStmt(FuncCallExprPlain("bar"))
+      )
+    )
+    val forInStr = "for foo in bar·(·)·{·baz·(·)·}"
+    val forInStmt = ForInStmt(IdPatt("foo"), FuncCallExprPlain("bar"), ExprStmt(FuncCallExprPlain("baz")))
+    assertStmt(forInStr, forInStmt)
+    assertStmt("while foo·(·)·{·bar·(·)·}",
+      WhileStmt(WhileCondExpr(Expr(FuncCallExprPlain("foo"))), ExprStmt(FuncCallExprPlain("bar")))
+    )
+    assertStmt("while var foo·=·bar·(·)·{·baz·(·)·}",
+      WhileStmt(
+        WhileCondDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("foo"), Expr(FuncCallExprPlain("bar"))))),
+        ExprStmt(FuncCallExprPlain("baz"))
+      )
+    )
+    assertStmt("do·{·foo·(·)·}·while bar·(·)",
+      DoWhileStmt(ExprStmt(FuncCallExprPlain("foo")), WhileCondExpr(Expr(FuncCallExprPlain("bar"))))
+    )
+    assertStmt("do·{·foo·(·)·}·while var bar·=·baz·(·)",
+      DoWhileStmt(
+        ExprStmt(FuncCallExprPlain("foo")),
+        WhileCondDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("bar"), Expr(FuncCallExprPlain("baz")))))
+      )
+    )
+    assertStmt("if foo·(·)·{·bar·(·)·}·else if var baz·=·qux·(·)·{·quux·(·)·}·else·{·corge·(·)·}",
+      IfStmt(
+        IfCondExpr(Expr(FuncCallExprPlain("foo"))),
+        ExprStmt(FuncCallExprPlain("bar")),
+        ElseClauseIf(
+          IfStmt(
+            IfCondDecl(VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("baz"), Expr(FuncCallExprPlain("qux"))))),
+            ExprStmt(FuncCallExprPlain("quux")),
+            ElseClauseBlock(ExprStmt(FuncCallExprPlain("corge")))
+          )
+        )
+      )
+    )
+    val switchStr =
+      "switch foo·(·)·{" +
+      "·case let·(·bar·,·baz·)·where qux == qux·:·corge·(·)" +
+      "·default·:·grault·(·)" +
+      "·}"
+    val switchStmt = SwitchStmt(
+      Expr(FuncCallExprPlain("foo")),
+      Seq(
+        SwitchCase(
+          CaseLabel(CaseItem(
+            ValPattLet(TuplePatt(Seq(IdPatt("bar"), IdPatt("baz")))),
+            Expr("qux", BinExprBin("==", "qux"))
+          )),
+          ExprStmt(FuncCallExprPlain("corge"))
+        ),
+        SwitchCase(DefaultLabel, ExprStmt(FuncCallExprPlain("grault")))
+      )
+    )
+    assertStmt(switchStr, switchStmt)
+    assertStmt("meh·:·" + forInStr, LabelStmtLoop("meh", forInStmt))
+    assertStmt("meh·:·" + switchStr, LabelStmtSwitch("meh", switchStmt))
+    assertStmt("break foo", BreakStmt(Some("foo")))
+    assertStmt("continue foo", ContStmt(Some("foo")))
+    assertStmt("fallthrough", FallthroughStmt)
+    assertStmt("return foo·(·)", ReturnStmt(Expr(FuncCallExprPlain("foo"))))
   }
 
   it should "handle declarations" in {
@@ -208,6 +290,47 @@ class ParserSpec extends GulliverSpec {
           SubResult(Seq.empty, "baz"), GetSetKeyBlock(GetSetKeyClause(), GetSetKeyClause())),
         ProtoAssocType("foo", Seq("bar", "baz"), Some("qux"))
       ))
+    )
+    assertDecl("@·foo·(bar)·convenience init·<·baz·>·(·qux·:·quux·)·{·corge·(·)·}",
+      InitDecl(InitHead(Attr("foo", "bar"), true), GenParamClause(Seq("baz")),
+        ParamClause(ParamNorm(false, false, false, "qux", None, "quux")),
+        ExprStmt(FuncCallExprPlain("corge"))
+      )
+    )
+    assertDecl("@·foo·(bar)·deinit·{·baz·(·)·}",
+      DeinitDecl(Attr("foo", "bar"), ExprStmt(FuncCallExprPlain("baz")))
+    )
+    assertDecl("extension foo·:·bar·,·baz·{·var qux·=·quux·}",
+      ExtDecl("foo", Seq("bar", "baz"), VarDeclPatt(VarDeclHead(), PatternInit(IdPatt("qux"), Some("quux"))))
+    )
+    assertDecl("@·foo·(bar)·subscript·(·baz·:·qux·)·->·quux·{·corge·(·)·}",
+      SubDeclCode(
+        SubHead(Attr("foo", "bar"), ParamClause(ParamNorm(false, false, false, "baz", None, "qux"))),
+        SubResult(Seq.empty, "quux"),
+        ExprStmt(FuncCallExprPlain("corge"))
+      )
+    )
+    assertDecl("@·foo·(bar)·subscript·(·baz·:·qux·)·->·quux·{·get·{·corge·(·)·}·set·(·grault·)·{·garply·(·)·}·}",
+      SubDeclGetSet(
+        SubHead(Attr("foo", "bar"), ParamClause(ParamNorm(false, false, false, "baz", None, "qux"))),
+        SubResult(Seq.empty, "quux"),
+        GetSetBlock(
+          GetClause(Seq.empty, ExprStmt(FuncCallExprPlain("corge"))),
+          SetClause(Seq.empty, Some("grault"), ExprStmt(FuncCallExprPlain("garply")))
+        )
+      )
+    )
+    assertDecl("@·foo·(bar)·subscript·(·baz·:·qux·)·->·quux·{·get set·}",
+      SubDeclGetSetKey(
+        SubHead(Attr("foo", "bar"), ParamClause(ParamNorm(false, false, false, "baz", None, "qux"))),
+        SubResult(Seq.empty, "quux"),
+        GetSetKeyBlock(GetSetKeyClause(), GetSetKeyClause())
+      )
+    )
+    assertDecl("operator prefix·+-·{·}", PreOperDecl("+-"))
+    assertDecl("operator postfix·+-·{·}", PostOperDecl("+-"))
+    assertDecl("operator infix·+-·{·precedence 123 associativity right·}",
+      InfixOperDecl("+-", InfixOperAttrs(123.toShort, Assoc.Right))
     )
   }
 

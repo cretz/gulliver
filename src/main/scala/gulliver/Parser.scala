@@ -357,7 +357,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   def postfixExpression: Rule1[PostExpr] = rule {
     (primaryExpression ~> (PostExprPrim(_))) ~
     zeroOrMore(
-      ws ~ optional(parenthesizedExpression) ~ closureExpression ~> (FuncCallExprBlock(PostExprTmp, _, _)) |
+      ws ~ optional(parenthesizedExpression ~ ws) ~ closureExpression ~> (FuncCallExprBlock(PostExprTmp, _, _)) |
       ws ~ parenthesizedExpression ~> (FuncCallExprPlain(PostExprTmp, _)) |
       ws ~ "." ~ "init" ~ push(InitExpr(PostExprTmp)) |
       ws ~ "." ~ "self" ~ push(PostSelfExpr(PostExprTmp)) |
@@ -393,13 +393,15 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   /// Statements ///
 
   def statement: Rule1[Stmt] = rule {
+    labeledStatement ~ semi |
     expression ~ semi ~> (ExprStmt(_)) |
     declaration ~ semi ~> (DeclStmt(_)) |
-    loopStatement ~ semi | branchStatement ~ semi |
-    labeledStatement ~ semi | controlTransferStatement ~ semi
+    loopStatement ~ semi |
+    branchStatement ~ semi |
+    controlTransferStatement ~ semi
   }
   def statements = rule { oneOrMore(statement) }
-  def semi = rule { optional(";") }
+  def semi = rule { optional(ws ~ ";") }
 
   // Loop Statements
 
@@ -408,36 +410,84 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def forStatement = rule {
-    "for" ~ "(" ~ optional(forInit) ~ ";" ~ optional(expression) ~ ";" ~ optional(expression) ~ ")" ~ codeBlock ~> (
-      ForStmt(_, _, _, _)
-    ) |
-    "for" ~ optional(forInit) ~ ";" ~ optional(expression) ~ ";" ~ optional(expression) ~ codeBlock ~> (
-      ForStmt(_, _, _, _)
+    "for" ~ "(" ~ optional(forInit) ~ ws ~ ";" ~ optional(expression) ~ ws ~ ";" ~
+      optional(expression) ~ ws ~ ")" ~ codeBlock ~> (ForStmt(_, _, _, _)) |
+    "for" ~ optional(forInit) ~ ws ~ ";" ~ optional(expression) ~ ws ~ ";" ~
+      optional(expression) ~ ws ~ codeBlock ~> (ForStmt(_, _, _, _)) |
+    // TODO: Check on whether a brace-block can be in an inc expression
+    "for" ~ optional(forInit) ~ ws ~ ";" ~ optional(expression) ~ ws ~ ";" ~ expressionExtractClosure ~> (
+      (i, c, e) => ForStmt(i, c, e._1, e._2)
     )
   }
   def forInit: Rule1[ForInit] = rule {
     variableDeclaration ~> (ForInitDecl(_)) |
     expressionList ~> (ForInitExpr(_))
   }
+  def expressionToExpressionAndClosure(e: Expr): (Option[Expr], Seq[Stmt]) = e match {
+    case Expr(PreExprOper(None, PostExprPrim(ClosureExpr(None, stmts))), Seq()) =>
+      None -> stmts
+    case Expr(PreExprOper(None,
+    FuncCallExprBlock(expr, None, ClosureExpr(None, stmts))), Seq()) =>
+      Some(Expr(PreExprOper(None, expr))) -> stmts
+    case Expr(PreExprOper(None,
+    FuncCallExprBlock(expr, Some(params), ClosureExpr(None, stmts))), Seq()) =>
+      Some(Expr(PreExprOper(None, FuncCallExprPlain(expr, params)))) -> stmts
+    // TODO: find a better way to make our own parse error
+    case _ => sys.error("Invalid expression: " + e)
+  }
+  def expressionExtractClosure: Rule1[(Option[Expr], Seq[Stmt])] = rule {
+    expression ~> (expressionToExpressionAndClosure _)
+  }
+  def declarationExtractClosure: Rule1[(Decl, Seq[Stmt])] = rule {
+    declaration ~> ((d: Decl) =>
+      d match {
+        case v: VarDeclPatt if !v.exprs.isEmpty && v.exprs.last.init =>
+          var stmts = Seq.empty[Stmt]
+          val patts = v.exprs.dropRight(1) :+ (v.exprs.last match {
+            case p: PatternInit => p.copy(init = p.init.flatMap { p =>
+              val e = expressionToExpressionAndClosure(p)
+              stmts = e._2
+              e._1
+            })
+          })
+          v.copy(exprs = patts) -> stmts
+        case _ => sys.error("Invalid expression: " + d)
+      }
+    )
+  }
 
-  def forInStatement = rule { "for" ~ pattern ~ "in" ~ expression ~ codeBlock ~> (ForInStmt(_, _, _)) }
+  def forInStatement = rule { "for" ~ pattern ~ ws ~ "in" ~ expressionExtractClosure ~>
+    ((p, e) => if (!e._1.isDefined) sys.error("Invalid for collection") else ForInStmt(p, e._1.get, e._2))
+  }
 
-  def whileStatement = rule { "while" ~ whileCondition ~ codeBlock ~> (WhileStmt(_, _)) }
+  def whileStatement = rule {
+    "while" ~ expressionExtractClosure ~> (e =>
+        if (!e._1.isDefined) sys.error("Invalid while condition")
+        else WhileStmt(WhileCondExpr(e._1.get), e._2)
+    ) |
+    "while" ~ declarationExtractClosure ~> (d =>
+      WhileStmt(WhileCondDecl(d._1), d._2)
+    )
+  }
   def whileCondition: Rule1[WhileCond] = rule {
     expression ~> (WhileCondExpr(_)) |
     declaration ~> (WhileCondDecl(_))
   }
 
-  def doWhileStatement = rule { "do" ~ codeBlock ~ "while" ~ whileCondition ~> (DoWhileStmt(_, _)) }
+  def doWhileStatement = rule { "do" ~ codeBlock ~ ws ~ "while" ~ whileCondition ~> (DoWhileStmt(_, _)) }
 
   // Branch Statements
 
   def branchStatement: Rule1[BranchStmt] = rule { ifStatement | switchStatement }
 
-  def ifStatement = rule { "if" ~ ifCondition ~ codeBlock ~ optional(elseClause) ~> (IfStmt(_, _, _)) }
-  def ifCondition: Rule1[IfCond] = rule {
-    expression ~> (IfCondExpr(_)) |
-    declaration ~> (IfCondDecl(_))
+  def ifStatement = rule {
+    "if" ~ expressionExtractClosure ~ ws ~ optional(elseClause) ~> ((e, c) =>
+      if (!e._1.isDefined) sys.error("Invalid if condition")
+      else IfStmt(IfCondExpr(e._1.get), e._2, c)
+    ) |
+    "if" ~ declarationExtractClosure ~ ws ~ optional(elseClause) ~> ((d, c) =>
+      IfStmt(IfCondDecl(d._1), d._2, c)
+    )
   }
   def elseClause: Rule1[ElseClause] = rule {
     "else" ~ ifStatement ~> (ElseClauseIf(_)) |
@@ -445,22 +495,22 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def switchStatement = rule {
-    "switch" ~ expression ~ "{" ~ optional(switchCases) ~ "}" ~> (SwitchStmt(_, _))
+    "switch" ~ expression ~ "{" ~ optional(switchCases) ~ ws ~ "}" ~> (SwitchStmt(_, _))
   }
-  def switchCases = rule { oneOrMore(switchCase) }
+  def switchCases = rule { oneOrMore(switchCase ~ ws) }
   def switchCase = rule {
     caseLabel ~ ";" ~> (SwitchCase(_, Seq.empty)) |
     defaultLabel ~ ";" ~> (SwitchCase(_, Seq.empty)) |
     caseLabel ~ statements ~> (SwitchCase(_, _)) |
     defaultLabel ~ statements ~> (SwitchCase(_, _))
   }
-  def caseLabel = rule { "case" ~ caseItemList ~> (CaseLabel(_)) }
+  def caseLabel = rule { "case" ~ caseItemList ~ ws ~ ":" ~> (CaseLabel(_)) }
   def caseItemList = rule {
     oneOrMore(pattern ~ optional(guardClause) ~> (CaseItem(_, _))).separatedBy(",")
   }
   def defaultLabel = rule { "default" ~ ":" ~ push(DefaultLabel) }
   def guardClause = rule { "where" ~ guardExpression }
-  def guardExpression = expression
+  def guardExpression = rule { expression }
 
   // Label Statement
 
@@ -468,8 +518,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     statementLabel ~ loopStatement ~> (LabelStmtLoop(_, _)) |
     statementLabel ~ switchStatement ~> (LabelStmtSwitch(_,_))
   }
-  def statementLabel = rule { labelName ~ ":" }
-  def labelName = identifier
+  def statementLabel = rule { labelName ~ ws ~ ":" }
+  def labelName = rule { identifier }
 
   // Control Transfer Statements
 
