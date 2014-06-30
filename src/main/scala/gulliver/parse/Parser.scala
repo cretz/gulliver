@@ -1,9 +1,24 @@
-package gulliver
+package gulliver.parse
+
+import java.io.File
 
 import org.parboiled2._
 import Ast._
+import scala.io.Source
 import scala.language.implicitConversions
 import shapeless._
+
+import scala.util.Try
+
+object Parser {
+  case class Settings(
+    // Key should be relative filepath from source using forward slashes, but can be anything. Value is actual source
+    inputs: Map[String, String])
+
+  def parse(settings: Settings): Map[String, Try[TopLevelDecl]] = {
+    settings.inputs.mapValues(s => new Parser(s).topLevelDeclaration.run())
+  }
+}
 
 class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 

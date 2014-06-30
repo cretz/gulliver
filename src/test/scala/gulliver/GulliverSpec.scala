@@ -1,10 +1,11 @@
 package gulliver
 
-import org.parboiled2._
+import org.parboiled2.ParseError
 import org.scalatest._
 import matchers._
 import scala.util.{Success, Try, Failure}
 import scala.io.Source
+import gulliver.parse._
 
 abstract class GulliverSpec extends FlatSpec with Matchers with OptionValues with Inside with Inspectors {
   def succeed = new Matcher[Try[_]] {

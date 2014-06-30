@@ -1,4 +1,4 @@
-package gulliver
+package gulliver.parse
 
 import scala.language.implicitConversions
 

@@ -1,4 +1,5 @@
 package gulliver
+package parse
 
 import org.scalatest._
 import Ast._
