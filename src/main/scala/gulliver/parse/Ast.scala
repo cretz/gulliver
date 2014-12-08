@@ -45,6 +45,10 @@ object Ast {
   case class UnicodeChar(digits: Seq[String]) extends EscapedChar
   case class ExprText(expr: Expr) extends TextItem
   case class StringText(value: String) extends TextItem
+  
+  case object TrueLit extends Lit
+  case object FalseLit extends Lit
+  case object NilLit extends Lit
 
   // Operators
 
@@ -79,6 +83,10 @@ object Ast {
   // Array Type
 
   case class ArrayType(typ: Type, dimCount: Int) extends Type
+  
+  // Dictionary Type
+  
+  case class DictType(keyType: Type, valType: Type) extends Type
 
   // Optional Type
 
@@ -276,18 +284,35 @@ object Ast {
   /// Declarations ///
 
   sealed trait Decl
-  sealed trait DeclSpec
-  object DeclSpec extends EnumObj {
-    case class EnumVal(name: String) extends Val(nextId, name) with DeclSpec
+  sealed trait DeclMod
+  object DeclMod extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with DeclMod
     val Class = EnumVal("class")
+    val Convenience = EnumVal("convenience")
+    val Dynamic = EnumVal("dynamic")
+    val Final = EnumVal("final")
+    val Infix = EnumVal("infix")
+    val Lazy = EnumVal("lazy")
     val Mut = EnumVal("mutating")
     val NonMut = EnumVal("nonmutating")
+    val Optional = EnumVal("optional")
     val Override = EnumVal("override")
+    val Postfix = EnumVal("postfix")
+    val Prefix = EnumVal("prefix")
+    val Required = EnumVal("required")
     val Static = EnumVal("static")
     val Unowned = EnumVal("unowned")
     val UnownedSafe = EnumVal("unowned(safe)")
     val UnownedUnsafe = EnumVal("unowned(unsafe)")
     val Weak = EnumVal("weak")
+  }
+  case class AccessMod(kind: AccessModKind, set: Boolean = false) extends DeclMod
+  sealed trait AccessModKind
+  object AccessModKind extends EnumObj {
+    case class EnumVal(name: String) extends Val(nextId, name) with AccessModKind
+    val Internal = EnumVal("internal")
+    val Private = EnumVal("private")
+    val Public = EnumVal("public")
   }
 
   // Module Scope
@@ -316,7 +341,7 @@ object Ast {
 
   // Constant Declaration
 
-  case class ConstDecl(attrs: Seq[Attr], specs: Seq[DeclSpec], exprs: Seq[PatternInit]) extends Decl
+  case class ConstDecl(attrs: Seq[Attr], mods: Seq[DeclMod], exprs: Seq[PatternInit]) extends Decl
   case class PatternInit(patt: Patt, init: Option[Expr])
 
   // Variable Declaration
@@ -328,7 +353,7 @@ object Ast {
   case class VarDeclGetSetKey(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetKeyBlock) extends VarDecl
   case class VarDeclWillDidSet(head: VarDeclHead, id: Id, typeAnn: TypeAnn,
     expr: Option[Expr], block: WillDidSetBlock) extends VarDecl
-  case class VarDeclHead(attrs: Seq[Attr] = Seq.empty, specs: Seq[DeclSpec] = Seq.empty)
+  case class VarDeclHead(attrs: Seq[Attr] = Seq.empty, mods: Seq[DeclMod] = Seq.empty)
   case class GetSetBlock(get: GetClause, set: Option[SetClause])
   case class GetClause(attrs: Seq[Attr], stmts: Seq[Stmt])
   case class SetClause(attrs: Seq[Attr], id: Option[Id], stmts: Seq[Stmt])
@@ -339,13 +364,14 @@ object Ast {
 
   // Type Alias Declaration
 
-  case class TypeAliasDecl(id: Id, typ: Type) extends Decl
+  case class TypeAliasDecl(head: TypeAliasHead, typ: Type) extends Decl
+  case class TypeAliasHead(attrs: Seq[Attr], mods: Seq[AccessMod], id: Id)
 
   // Function Declaration
 
   case class FuncDecl(head: FuncHead, name: FuncName, gen: Option[GenParamClause],
     sig: FuncSig, stmts: Seq[Stmt]) extends Decl
-  case class FuncHead(attrs: Seq[Attr] = Seq.empty, specs: Seq[DeclSpec] = Seq.empty)
+  case class FuncHead(attrs: Seq[Attr] = Seq.empty, mods: Seq[DeclMod] = Seq.empty)
   sealed trait FuncName
   implicit def stringToFuncName(str: String): FuncName = FuncNameId(str)
   case class FuncNameId(id: Id) extends FuncName
@@ -364,7 +390,7 @@ object Ast {
 
   // Enumeration Declaration
 
-  case class EnumDecl(attrs: Seq[Attr], enum: Enum) extends Decl
+  case class EnumDecl(attrs: Seq[Attr], mods: Seq[AccessMod], enum: Enum) extends Decl
   case class Enum(id: Id, gen: Option[GenParamClause], members: Seq[EnumMember], typeId: Option[TypeId] = None)
   sealed trait EnumMember
   case class EnumMemberDecl(decl: Decl) extends EnumMember
@@ -376,36 +402,44 @@ object Ast {
 
   // Structure Declaration
 
-  case class StructDecl(attrs: Seq[Attr], id: Id, gen: Option[GenParamClause],
+  case class StructDecl(attrs: Seq[Attr], mods: Seq[AccessMod], id: Id, gen: Option[GenParamClause],
     inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
 
   // Class Declaration
 
-  case class ClassDecl(attrs: Seq[Attr], id: Id, gen: Option[GenParamClause],
+  case class ClassDecl(attrs: Seq[Attr], mods: Seq[AccessMod], id: Id, gen: Option[GenParamClause],
     inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
 
   // Protocol Declaration
 
-  case class ProtoDecl(attrs: Seq[Attr], id: Id, inherit: Seq[TypeId], members: Seq[ProtoMember]) extends Decl
+  case class ProtoDecl(attrs: Seq[Attr], mods: Seq[AccessMod], id: Id,
+    inherit: Seq[TypeId], members: Seq[ProtoMember]) extends Decl
   sealed trait ProtoMember
   case class ProtoProp(head: VarDeclHead, id: Id, typeAnn: TypeAnn, block: GetSetKeyBlock) extends ProtoMember
   case class ProtoMeth(head: FuncHead, name: FuncName, gen: Option[GenParamClause], sig: FuncSig) extends ProtoMember
   case class ProtoInit(head: InitHead, gen: Option[GenParamClause], params: ParamClause) extends ProtoMember
   case class ProtoSub(head: SubHead, res: SubResult, block: GetSetKeyBlock) extends ProtoMember
-  case class ProtoAssocType(id: Id, inherit: Seq[TypeId], value: Option[Type]) extends ProtoMember
+  case class ProtoAssocType(head: TypeAliasHead, inherit: Seq[TypeId], value: Option[Type]) extends ProtoMember
 
   // Initializer Declaration
 
   case class InitDecl(head: InitHead, gen: Option[GenParamClause], param: ParamClause, stmts: Seq[Stmt]) extends Decl
-  case class InitHead(attrs: Seq[Attr] = Seq.empty, conv: Boolean = false)
-
+  case class InitHead(attrs: Seq[Attr], mods: Seq[DeclMod], kind: InitHeadKind)
+  sealed trait InitHeadKind
+  object InitHeadKind extends EnumObj {
+    case class EnumVal() extends Val with InitHeadKind
+    val Norm = EnumVal()
+    val FailOpt = EnumVal()
+    val FailImplicitOpt = EnumVal()
+  }
+  
   // Deinitializer Declaration
 
   case class DeinitDecl(attrs: Seq[Attr], stmts: Seq[Stmt]) extends Decl
 
   // Extension Declaration
 
-  case class ExtDecl(typeId: TypeId, inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
+  case class ExtDecl(mods: Seq[AccessMod], typeId: TypeId, inherit: Seq[TypeId], decls: Seq[Decl]) extends Decl
 
   // Subscript Declaration
 
@@ -413,7 +447,7 @@ object Ast {
   case class SubDeclCode(head: SubHead, res: SubResult, stmts: Seq[Stmt]) extends SubDecl
   case class SubDeclGetSet(head: SubHead, res: SubResult, block: GetSetBlock) extends SubDecl
   case class SubDeclGetSetKey(head: SubHead, res: SubResult, block: GetSetKeyBlock) extends SubDecl
-  case class SubHead(attrs: Seq[Attr], param: ParamClause)
+  case class SubHead(attrs: Seq[Attr], mods: Seq[DeclMod], param: ParamClause)
   case class SubResult(attrs: Seq[Attr], typ: Type)
 
   // Operator Declaration

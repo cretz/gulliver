@@ -29,7 +29,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Whitespace and Comments
 
-  val wsChar = CharPredicate(" \r\n\t\13\f\0")
+  val wsChar = CharPredicate(" \r\n\t\u000b\f\u0000")
   def ws = rule { zeroOrMore(wsChar) }
   def wsReq = rule { oneOrMore(wsChar) }
   def noWs = rule { !wsChar }
@@ -80,21 +80,26 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   def globalKeywords = rule { declarationKeywords | statementKeywords | expressionTypeKeywords }
   def declarationKeywords = rule {
-    "class" | "deinit" | "enum" | "extension" | "func" | "import" | "init" | "let" |
-    "protocol" | "static" | "struct" | "subscript" | "typealias" | "var"
+    "class" | "deinit" | "enum" | "extension" | "func" | "import" | "init" | "internal" | "let" |
+    "operator" | "private" | "protocol" | "public" | "static" | "struct" | "subscript" | "typealias" | "var"
   }
   def statementKeywords = rule {
-    "break" | "case" | "continue" | "default" | "do" | "else" | "fallthrough" | "if" |
-    "in" | "for" | "return" | "switch" | "where" | "while"
+    "break" | "case" | "continue" | "default" | "do" | "else" | "fallthrough" | "for" |
+    "if" | "in" | "return" | "switch" | "where" | "while"
   }
   def expressionTypeKeywords = rule {
-    "as" | "dynamicType" | "is" | "new" | "super" | "self" | "Self" | "Type" | "__COLUMN__" |
+    "as" | "dynamicType" | "is" | "nil" | "self" | "Self" | "super" | "true" | "__COLUMN__" |
     "__FILE__" | "__FUNCTION__" | "__LINE__"
   }
 
   // Literals
 
-  def literal: Rule1[Lit] = rule { floatLiteral | integerLiteral | stringLiteral }
+  def literal: Rule1[Lit] = rule {
+    floatLiteral | integerLiteral | stringLiteral |
+    capture("true") ~> ((_: String) => TrueLit) |
+    capture("false") ~> ((_: String) => FalseLit) |
+    capture("nil") ~> ((_: String) => NilLit)
+  }
 
   // Integer Literals
 
@@ -172,8 +177,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Operators
 
-  def operator = rule { capture(oneOrMore(operatorChar)) ~> (Oper(_))}
-  val operatorChar = CharPredicate('/', '=', '-', '+', '!', '*', '%', '<', '>', '&', '|', '^', '~', '.')
+  def operator = rule {
+    capture(oneOrMore(operatorChar)) ~> (Oper(_)) |
+    capture(dotOperatorHead ~ zeroOrMore(dotOperatorChar)) ~> (Oper(_))
+  }
+  val operatorChar = CharPredicate('/', '=', '-', '+', '!', '*', '%', '<', '>', '&', '|', '^', '~', '?')
   def binaryOperator = rule {
     wsReq ~ operator ~ wsReq |
     noWs ~ operator ~ noWs
@@ -181,17 +189,19 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // TODO: How to tell difference between prefix "." oper and implicit member expression?
   def prefixOperator = rule { !('.' ~ !operatorChar) ~ operator ~ noWs }
   def postfixOperator = rule { noWs ~ operator }
+  
+  def dotOperatorHead = rule { ".." }
+  def dotOperatorChar = rule { "." | operatorChar }
 
   /// Types ///
 
   def typBase: Rule1[Type] = rule {
-    protocolCompositionType | typeIdentifier | tupleType
+    arrayType | dictionaryType | protocolCompositionType | typeIdentifier | tupleType
   }
 
   def typ: Rule1[Type] = rule {
     typBase ~
     zeroOrMore(
-      ws ~ oneOrMore(capture("[") ~ "]") ~> ((s: Seq[String]) => ArrayType(TypeTmp, s.size)) |
       ws ~ "->" ~ typ ~> (FuncType(TypeTmp, _)) |
       ws ~ '?' ~ push(OptType(TypeTmp)) |
       ws ~ '!' ~ push(ImplicitOptType(TypeTmp)) |
@@ -248,6 +258,21 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     )
   }
   def elementName = rule { identifier ~ ws }
+  
+  // Array Type
+  
+  def arrayType = rule {
+    "[" ~ ws ~ typ ~ ws ~ "]" ~> (
+      _ match {
+        case ArrayType(typ, dim) => ArrayType(typ, dim + 1)
+        case typ => ArrayType(typ, 1)
+      }
+    )
+  }
+  
+  // Dictionary Type
+  
+  def dictionaryType = rule { "[" ~ ws ~ typ ~ ws ~ ":" ~ ws ~ typ ~ ws ~ "]" ~> (DictType(_, _)) }
 
   // Protocol Composition Type
 
@@ -279,8 +304,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   def binaryExpression: Rule1[BinExpr] = rule {
     ws ~ assignmentOperator ~ ws ~ prefixExpression ~> (BinExprAssign(_)) |
-    binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
     conditionalOperator ~ prefixExpression ~> (BinExprCond(_, _)) |
+    binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
     typeCastingOperator ~> (BinExprCast(_))
   }
   def binaryExpressions = rule { oneOrMore(binaryExpression) }
@@ -560,8 +585,14 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
   def declarations = rule { oneOrMore(declaration ~ ws) }
 
-  def declarationSpecifiers = rule { oneOrMore(declarationSpecifier) }
-  def declarationSpecifier = rule { valueMap(DeclSpec) ~ ws }
+  def declarationModifiers = rule { oneOrMore(declarationModifier) }
+  def declarationModifier = rule { valueMap(DeclMod) ~ ws | accessLevelModifier ~ ws }
+  def accessLevelModifiers = rule { oneOrMore(accessLevelModifier) }
+  def accessLevelModifier: Rule1[AccessMod] = rule {
+    valueMap(AccessModKind) ~ ws ~ optional(capture("(" ~ ws ~ "set" ~ ws ~ ")")) ~> (
+      (kind: AccessModKind, set: Option[_]) => AccessMod(kind, set.isDefined)
+    )
+  }
 
   // Module Scope
 
@@ -592,7 +623,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Constant Declaration
 
   def constantDeclaration = rule {
-    optional(attributes) ~ optional(declarationSpecifiers) ~ "let" ~ patternInitializerList ~> (
+    optional(attributes) ~ optional(declarationModifiers) ~ "let" ~ patternInitializerList ~> (
       ConstDecl(_, _, _)
     )
   }
@@ -620,7 +651,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def variableDeclarationHead = rule {
-    optional(attributes) ~ optional(declarationSpecifiers) ~ "var" ~> (VarDeclHead(_: Option[Seq[Attr]], _))
+    optional(attributes) ~ optional(declarationModifiers) ~ "var" ~> (VarDeclHead(_: Option[Seq[Attr]], _))
   }
   def variableName = rule { identifier ~ ws }
 
@@ -663,7 +694,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Type Alias Declaration
 
   def typealiasDeclaration = rule { typealiasHead ~ typealiasAssignment ~> (TypeAliasDecl(_, _)) }
-  def typealiasHead = rule { "typealias" ~ typealiasName }
+  def typealiasHead = rule {
+    optional(attributes) ~ optional(accessLevelModifiers) ~ "typealias" ~ typealiasName ~> (
+      TypeAliasHead(_, _, _)
+    )
+  }
   def typealiasName = rule { identifier ~ ws }
   def typealiasAssignment = rule { "=" ~ typ }
 
@@ -676,7 +711,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def functionHead = rule {
-    optional(attributes) ~ optional(declarationSpecifiers) ~ "func" ~> (FuncHead(_, _))
+    optional(attributes) ~ optional(declarationModifiers) ~ "func" ~> (FuncHead(_, _))
   }
   def functionName: Rule1[FuncName] = rule { identifier ~ ws ~> (FuncNameId(_)) | operator ~ ws ~> (FuncNameOper(_)) }
 
@@ -710,7 +745,9 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Enumeration Declaration
 
   def enumDeclaration = rule {
-    optional(attributes) ~ "enum" ~ (rawValueStyleEnum | unionStyleEnum) ~> (EnumDecl(_, _))
+    optional(attributes) ~ optional(accessLevelModifiers) ~ "enum" ~ (rawValueStyleEnum | unionStyleEnum) ~> (
+      EnumDecl(_, _, _)
+    )
   }
 
   def unionStyleEnum = rule {
@@ -752,8 +789,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Struct Declaration
 
   def structDeclaration = rule {
-    optional(attributes) ~ "struct" ~ structName ~ optional(genericParameterClause) ~
-      optional(typeInheritanceClause) ~ structBody ~> (StructDecl(_, _, _, _, _))
+    optional(attributes) ~ optional(accessLevelModifiers) ~ "struct" ~ structName ~ optional(genericParameterClause) ~
+      optional(typeInheritanceClause) ~ structBody ~> (StructDecl(_, _, _, _, _, _))
   }
   def structName = rule { identifier ~ ws }
   def structBody = rule { "{" ~ optional(declarations ~ ws) ~ "}" }
@@ -761,8 +798,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Class Declaration
 
   def classDeclaration = rule {
-    optional(attributes) ~ "class" ~ className ~ optional(genericParameterClause) ~
-      optional(typeInheritanceClause) ~ classBody ~> (ClassDecl(_, _, _, _, _))
+    optional(attributes) ~ optional(accessLevelModifiers) ~ "class" ~ className ~ optional(genericParameterClause) ~
+      optional(typeInheritanceClause) ~ classBody ~> (ClassDecl(_, _, _, _, _, _))
   }
   def className = rule { identifier ~ ws }
   def classBody = rule { "{" ~ optional(declarations ~ ws) ~ "}" }
@@ -770,9 +807,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Protocol Declaration
 
   def protocolDeclaration = rule {
-    optional(attributes) ~ "protocol" ~ protocolName ~ optional(typeInheritanceClause) ~ protocolBody ~> (
-      ProtoDecl(_, _, _, _)
-    )
+    optional(attributes) ~ optional(accessLevelModifiers) ~ "protocol" ~ protocolName ~
+      optional(typeInheritanceClause) ~ protocolBody ~> (ProtoDecl(_, _, _, _, _))
   }
   def protocolName = rule { identifier ~ ws }
   def protocolBody = rule { "{" ~ optional(protocolMemberDeclarations) ~ "}" }
@@ -796,7 +832,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   }
 
   def protocolInitializerDeclaration = rule {
-    initializerHead ~ optional(genericParameterClause) ~ parameterClause ~> (ProtoInit(_, _, _))
+    initializerHead ~ ws ~ optional(genericParameterClause) ~ parameterClause ~> (ProtoInit(_, _, _))
   }
 
   def protocolSubscriptDeclaration = rule {
@@ -812,12 +848,20 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Initializer Declaration
 
   def initializerDeclaration = rule {
-    initializerHead ~ optional(genericParameterClause) ~ parameterClause ~ initializerBody ~> (
+    initializerHead ~ ws ~ optional(genericParameterClause) ~ parameterClause ~ initializerBody ~> (
       InitDecl(_, _, _, _)
     )
   }
   def initializerHead = rule {
-    optional(attributes) ~ optional(capture("convenience")) ~ "init" ~> (InitHead(_, _))
+    optional(attributes) ~ optional(declarationModifiers) ~ "init" ~
+      optional(capture(ch('?') | '!')) ~> ((attrs, mods, kind) =>
+        InitHead(attrs, mods, kind match {
+          case None => InitHeadKind.Norm
+          case Some("?") => InitHeadKind.FailOpt
+          case Some("!") => InitHeadKind.FailImplicitOpt
+          case Some(_) => ???
+        })
+      )
   }
   def initializerBody = codeBlock
 
@@ -829,7 +873,8 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Extension Declaration
   def extensionDeclaration = rule {
-    "extension" ~ typeIdentifier ~ ws ~ typeInheritanceClause ~ extensionBody ~> (ExtDecl(_, _, _))
+    optional(accessLevelModifiers) ~ "extension" ~ typeIdentifier ~ ws ~
+      typeInheritanceClause ~ extensionBody ~> (ExtDecl(_, _, _, _))
   }
   def extensionBody = rule { "{" ~ optional(declarations) ~ "}" }
 
@@ -840,7 +885,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     subscriptHead ~ subscriptResult ~ getterSetterBlock ~> (SubDeclGetSet(_, _, _)) |
     subscriptHead ~ subscriptResult ~ codeBlock ~> (SubDeclCode(_, _, _))
   }
-  def subscriptHead = rule { optional(attributes) ~ "subscript" ~ parameterClause ~> (SubHead(_, _)) }
+  def subscriptHead = rule {
+    optional(attributes) ~ optional(declarationModifiers) ~ "subscript" ~ parameterClause ~> (
+      SubHead(_, _, _)
+    )
+  }
   def subscriptResult = rule { "->" ~ optional(attributes) ~ typ ~ ws ~> (SubResult(_, _)) }
 
   // Operator Declaration

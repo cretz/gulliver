@@ -7,8 +7,8 @@ case class Classpath(entries: Seq[Classpath.Entry]) {
 }
 
 object Classpath {
-  val Default = Classpath(Seq(JavaRuntimeEntry))
   val JavaRuntimeEntry = EntryJar(new File(System.getProperty("sun.boot.class.path"), "rt.jar"))
+  val Default = Classpath(Seq(JavaRuntimeEntry))
 
   trait Entry
   case class EntryJar(file: File) extends Entry

@@ -1,10 +1,8 @@
 package gulliver.stdlib
 
-import gulliver.transform.Embedded
-
+  /* Something like this...
 object Printing extends Embedded {
 
-  /* Something like this...
   val embeds = Map(
     FuncEmbed(None, "print") -> print,
     FuncEmbed(None, "println") -> println
@@ -25,5 +23,5 @@ object Printing extends Embedded {
       func.invoke()
     }
   }
-  */
 }
+  */

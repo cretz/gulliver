@@ -4,7 +4,6 @@ import java.io.{PrintStream, ByteArrayOutputStream, File}
 import java.lang.reflect.Modifier
 
 import gulliver.parse.Parser
-import gulliver.transform.Transformer
 import gulliver.compile.Compiler
 import gulliver.util.Classpath
 import org.scalatest._
@@ -38,12 +37,11 @@ class AllChecksSpec extends GulliverSpec {
         val relativePath = f.getAbsolutePath.replace(specDir.getAbsolutePath, "").replace('\\', '/')
         // Parse it
         val decls = Parser.parse(Parser.Settings(Map(relativePath -> code))).mapValues(_.get)
-        // Transform it
-        val mods = Transformer.transform(
-          Transformer.Settings(Classpath.Default, decls)
-        )
         // Compile it
-        val classes = Compiler.compile(Compiler.Settings(mods))
+        val results = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
+        // Check errors then get classes
+        results.values.foreach(res => require(res.errors.isEmpty, sys.error("Err: " + res.errors)))
+        val classes = results.values.flatMap(_.classes).toMap
         // Create class loader
         val loader = new TestClassLoader
         // Define classes, getting back the static main methods
