@@ -37,15 +37,16 @@ class AllChecksSpec extends GulliverSpec {
         val relativePath = f.getAbsolutePath.replace(specDir.getAbsolutePath, "").replace('\\', '/')
         // Parse it
         val decls = Parser.parse(Parser.Settings(Map(relativePath -> code))).mapValues(_.get)
+        ???
+        /*
         // Compile it
-        val results = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
+        val result = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
         // Check errors then get classes
-        results.values.foreach(res => require(res.errors.isEmpty, sys.error("Err: " + res.errors)))
-        val classes = results.values.flatMap(_.classes).toMap
+        require(result.errors.isEmpty, sys.error("Err: " + result.errors))
         // Create class loader
         val loader = new TestClassLoader
         // Define classes, getting back the static main methods
-        val mainMethods = classes.flatMap { case (className, bytes) =>
+        val mainMethods = result.classes.flatMap { case (className, bytes) =>
           val cls = loader.defineClass(className, bytes)
           try {
             val method = cls.getDeclaredMethod("main", classOf[Array[String]])
@@ -66,6 +67,7 @@ class AllChecksSpec extends GulliverSpec {
           try { src.mkString } finally { src.close() }
         }
         new String(stdout.toByteArray) should be(check)
+        */
       }
     }
   }
