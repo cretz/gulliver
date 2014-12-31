@@ -1,99 +1,79 @@
 package gulliver.compile
 
-object JavaModel {
-  class Scope(pkg: Pkg, val parent: Option[Scope] = None) {
-    var tempVarCounter = 0
-    var stmts = Seq.empty[Stmt]
-    var stack = List.empty[Referenceable]
+import org.eclipse.jdt.core.dom
+import scala.collection.JavaConversions._
+
+class JavaModel(ast: dom.AST = dom.AST.newAST(dom.AST.JLS8)) {
+  
+  sealed trait Context {
+    def module: dom.CompilationUnit = parent.module
     
-    def pop() = {
-      val ret = stack.head
-      stack = stack.tail
-      ret
+    def parentOption = Option.empty[Context]
+    
+    def parent = parentOption.getOrElse(sys.error("No parent"))
+    
+    def pkgName: String = parent.pkgName
+  }
+  
+  class GlobalContext extends Context {
+    
+  }
+  
+  class PackageContext(global: GlobalContext, override val pkgName: String,
+      override val module: dom.CompilationUnit) extends Context {
+    override val parentOption = Some(global)
+    
+    lazy val moduleType: dom.TypeDeclaration = {
+      val decl = ast.newTypeDeclaration()
+      decl.setName(ast.newSimpleName("module"))
+      decl.modifiers().addRef(ast.newModifier(dom.Modifier.ModifierKeyword.FINAL_KEYWORD))
+      decl.modifiers().addRef(ast.newModifier(dom.Modifier.ModifierKeyword.PUBLIC_KEYWORD))
+      module.types().addRef(decl)
+      // Create main
+      val func = ast.newMethodDeclaration()
+      func.setName(ast.newSimpleName("main"))
+      func.modifiers().addRef(ast.newModifier(dom.Modifier.ModifierKeyword.STATIC_KEYWORD))
+      func.modifiers().addRef(ast.newModifier(dom.Modifier.ModifierKeyword.PUBLIC_KEYWORD))
+      val argsArray = ast.newSingleVariableDeclaration()
+      argsArray.setType(ast.newArrayType(ast.newSimpleType(ast.newName("java.lang.String"))))
+      argsArray.setName(ast.newSimpleName("args"))
+      func.parameters().addRef(argsArray)
+      func.setBody(ast.newBlock())
+      decl.bodyDeclarations().addRef(func)
+      decl
     }
-
-    def addStmt(stmt: Stmt): Unit = stmts :+= stmt
     
-    def push(ref: Referenceable): Unit = stack = ref :: stack
-  }
-  
-  case class Err()
-  
-  case class Pkg(
-    name: String,
-    decls: Map[String, TypeDecl] = Map.empty,
-    errors: Seq[Err] = Seq.empty
-  )
-  
-  sealed trait TypeDecl
-  case class ClassDecl(
-    ref: TypeRef,
-    modifiers: Int = 0,
-    iface: Boolean = false,
-    annotations: Map[String, Map[String, String]] = Map.empty,
-    exts: Seq[TypeRef] = Seq.empty,
-    impls: Seq[TypeRef] = Seq.empty,
-    innerDecls: Map[String, TypeDecl] = Map.empty,
-    methods: Map[String, Seq[MethodDecl]] = Map.empty,
-    errors: Seq[Err] = Seq.empty
-  )
-  
-  case class MethodDecl(
-    name: String,
-    ref: TypeRef,
-    params: Seq[ParamDecl] = Seq.empty,
-    varargs: Boolean = false,
-    stmts: Seq[Stmt] = Seq.empty,
-    errors: Seq[Err] = Seq.empty
-  )
-  
-  case class ParamDecl(
-    name: String,
-    ref: TypeRef
-  )
-  
-  case class TypeRef(
-    pkgName: String,
-    className: String,
-    outerClassPath: Option[String] = None,
-    params: Seq[TypeParam] = Seq.empty
-  )
-  
-  case class TypeParam(
-    name: String,
-    exts: Seq[TypeRef] = Seq.empty
-  )
+    lazy val moduleStaticInit: dom.Initializer = {
+      val init = ast.newInitializer()
+      init.modifiers().addRef(ast.newModifier(dom.Modifier.ModifierKeyword.STATIC_KEYWORD))
+      moduleType.bodyDeclarations().addRef(init)
+      init
+    }
     
-//  sealed trait Subject
-//  sealed trait CallableSubject extends Subject
-//  case class MethodSubject(ref: MethodRef) extends Subject
-  
-  sealed trait Referenceable
-  
-  sealed trait Callable {
-    def forParams(params: Seq[Referenceable]): Option[CallableWithParams] = ???
-  }
-  case class MethodSelection(fqcn: String, name: String, refs: Seq[MethodRef])
-    extends Callable
-  
-  sealed trait CallableWithParams {
-    
-  }
-  case class MethodRef(fqcn: String, name: String, params: Seq[Param],
-    ref: TypeRef, static: Boolean) extends CallableWithParams {
-    
-  }
-  case class Param(name: Option[String], typ: TypeRef, varargs: Boolean)
-
-  sealed trait Stmt
-  object SimpleStmt {
-    def apply(callWithParams: CallableWithParams, params: Seq[Referenceable]): SimpleStmt = {
-      ???
+    def addStatement(stmt: dom.Statement): Unit = {
+      moduleStaticInit.getBody.statements.addRef(stmt)
     }
   }
-  class SimpleStmt(code: String, val typ: TypeRef) extends Stmt with Referenceable {
-    var varName = Option.empty[String]
+  
+  sealed trait DomExpr
+  
+  case class DomExprSimple(expr: dom.Expression) extends DomExpr
+  case class DomExprRef(expr: dom.Expression, ref: dom.SimpleName) extends DomExpr
+  case class DomExprComposite(exprs: Seq[dom.Expression]) extends DomExpr
+  
+  // Implicits...
+  
+  import scala.language.implicitConversions
+  
+  implicit class JavaListAnyRef(list: java.util.List[_]) {
+    @inline
+    def toAnyRef = list.asInstanceOf[java.util.List[AnyRef]]
+    
+    def addRef(v: AnyRef) = toAnyRef.add(v)
+    def addAllRefs(v: Seq[AnyRef]) = toAnyRef.addAll(v)
   }
-  case class CompositeStmt(stmts: Seq[Stmt]) extends Stmt
-
+  
+  implicit class PimpedNode(node: dom.ASTNode) {
+    def setSourceAst(ast: AnyRef): Unit = node.setProperty("gulliver.astNode", ast)
+  }
 }

@@ -31,6 +31,7 @@ class ParserSpec extends GulliverSpec {
     "/*Some /*inner*/ comment*/" parsedWith(_.multilineComment.run()) should
       be(MultilineComment("Some /*inner*/ comment"))
     "/* Unmatched /* */" shouldFailParseOn(_.multilineComment.run())
+    "/*-FOO\nBAR\n-*/" parsedWith(_.multilineComment.run()) should be(MultilineComment("-FOO\nBAR\n-"))
   }
 
   it should "handle identifiers" in {

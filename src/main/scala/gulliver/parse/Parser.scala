@@ -30,7 +30,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
   // Whitespace and Comments
 
   val wsChar = CharPredicate(" \r\n\t\u000b\f\u0000")
-  def ws = rule { zeroOrMore(wsChar) }
+  def ws = rule { zeroOrMore(wsChar | (singleLineComment ~ drop[SingleLineComment]) | (multilineComment ~ drop[MultilineComment])) }
   def wsReq = rule { oneOrMore(wsChar) }
   def noWs = rule { !wsChar }
   def eol = rule { CharPredicate("\r\n") | str("\r\n") }
@@ -596,7 +596,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Module Scope
 
-  def topLevelDeclaration = rule { optional(statements) ~> (TopLevelDecl(_)) }
+  def topLevelDeclaration = rule { ws ~ optional(statements) ~ ws ~> (TopLevelDecl(_)) }
 
   // Code Blocks
 

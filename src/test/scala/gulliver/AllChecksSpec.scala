@@ -2,13 +2,13 @@ package gulliver
 
 import java.io.{PrintStream, ByteArrayOutputStream, File}
 import java.lang.reflect.Modifier
-
 import gulliver.parse.Parser
 import gulliver.compile.Compiler
 import gulliver.util.Classpath
 import org.scalatest._
-
 import scala.io.Source
+import gulliver.parse.Ast
+import scala.util.Success
 
 class AllChecksSpec extends GulliverSpec {
   behavior of "Gulliver language suite"
@@ -34,19 +34,23 @@ class AllChecksSpec extends GulliverSpec {
           val src = Source.fromFile(f)
           try { src.mkString } finally { src.close() }
         }
-        val relativePath = f.getAbsolutePath.replace(specDir.getAbsolutePath, "").replace('\\', '/')
+        val relativePath = f.getAbsolutePath.replace(specDir.getAbsolutePath, "").
+          replace('\\', '/').dropWhile('/'==_)
         // Parse it
         val decls = Parser.parse(Parser.Settings(Map(relativePath -> code))).mapValues(_.get)
-        ???
-        /*
+        // Parse the multiline comment from the top and remove the top line and all
+        //  carriage returns
+        val Success(Ast.MultilineComment(comment)) = new Parser(code).multilineComment.run()
+        val cleanComment = comment.replace("\r", "")
+        require(cleanComment.startsWith("-OUTPUT:") && cleanComment.endsWith("-"))
+        val expectedOutput = cleanComment.drop("-OUTPUT:\n".length).dropRight(1)
         // Compile it
-        val result = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
-        // Check errors then get classes
-        require(result.errors.isEmpty, sys.error("Err: " + result.errors))
+        val Left(result) = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
         // Create class loader
         val loader = new TestClassLoader
         // Define classes, getting back the static main methods
-        val mainMethods = result.classes.flatMap { case (className, bytes) =>
+        val mainMethods = result.flatMap { case (fileName, bytes) =>
+          val className = fileName.dropRight(".class".length).replace('/', '.')
           val cls = loader.defineClass(className, bytes)
           try {
             val method = cls.getDeclaredMethod("main", classOf[Array[String]])
@@ -59,15 +63,12 @@ class AllChecksSpec extends GulliverSpec {
         val previousOut = System.out
         try {
           System.setOut(new PrintStream(stdout))
-          mainMethods.head.invoke(null)
+          mainMethods.head.invoke(null, Array.empty[String])
         } finally { System.setOut(previousOut) }
-        // Load up check and validate
-        val check = {
-          val src = Source.fromFile(f.getAbsolutePath.dropRight(6) + ".check")
-          try { src.mkString } finally { src.close() }
-        }
-        new String(stdout.toByteArray) should be(check)
-        */
+        // Get output string without carriage retruns
+        val actualOutput = new String(stdout.toByteArray).replace("\r", "")
+        // Validate output (remove carriage returns from
+        actualOutput should be(expectedOutput)
       }
     }
   }
