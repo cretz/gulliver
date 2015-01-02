@@ -3,180 +3,176 @@ package gulliver.compile
 import gulliver.parse.Ast
 import gulliver.util.Formatter
 import gulliver.util.Classpath
-import org.eclipse.jdt.core.dom
 import scala.collection.JavaConversions._
 import scala.collection.JavaConverters._
 
 object Transpiler {
-  def transpile(settings: Compiler.Settings): Map[String, dom.CompilationUnit] = {
+  def transpile(settings: Compiler.Settings): Map[String, JAst.CompilationUnit] = {
     val transpiler = new Transpiler(settings.classpath)
+    // println(Formatter.formatParens(settings.input.toString))
     settings.input.foreach {
       case (file, decl) => transpiler.fromFile(file, decl)
     }
-    transpiler.units
+    transpiler.globalCtx.getAllUnits()
   }
 }
 
 class Transpiler(val cp: Classpath) {
-  val ast = dom.AST.newAST(dom.AST.JLS8)
-  val mod = new JavaModel(ast)
-  import mod._
+  import JavaModel._
   
-  var units = Map.empty[String, dom.CompilationUnit]
+  val globalCtx = new GlobalContext(cp)
   
   def fromFile(relativeFile: String, decl: Ast.TopLevelDecl): Unit = {
     val pieces = relativeFile.split('/')
     val pkgName = pieces.dropRight(1).mkString(".")
-    val globalCtx = new GlobalContext
-    val pkgCtx = new PackageContext(globalCtx, pkgName, getOrCreateModuleUnit(pkgName))
-    topLevelDecl(pkgCtx, decl)
-  }
-  
-  def getOrCreateModuleUnit(pkgName: String): dom.CompilationUnit = {
-    val modulePath = pkgName.replace('.', '/') + "/module"
-    units.getOrElse(modulePath, {
-      val unit = ast.newCompilationUnit()
-      unit.setPackage(ast.newPackageDeclaration())
-      unit.getPackage.setName(ast.newName(pkgName))
-      units += modulePath -> unit
-      unit
-    })
+    val fileCtx = new FileContext(globalCtx, globalCtx.getOrCreatePkg(pkgName))
+    fileCtx.importPkg("java.lang")
+    topLevelDecl(fileCtx, decl)
   }
   
   ///
   
-  def binExpr(ctx: Context, e: Ast.BinExpr): DomExpr = e match {
+//  def binExpr(ctx: Context, e: Ast.BinExpr): DomExpr = e match {
+//    case _ => ???
+//  }
+  
+  def explicitMemberExpr(ctx: Context, e: Ast.ExplicitMemberExpr): Seq[JAst.Expr] = e match {
+    case Ast.ExplicitMemberExprId(post, Ast.Id(name), None) =>
+      // Find methods or fields of the type
+      postExpr(ctx, post).flatMap { expr =>
+        expr.findChildRefs(ctx, name).map {
+          case m: Ref.MethodRef =>
+            JAst.ExprMethodRef(
+              expr = expr,
+              name = name.toSimpleName
+            ).setRef(m).setType(m.retType.toType).setSourceAst(e)
+          case f: Ref.FieldRef =>
+            JAst.FieldAccess(
+              expr = expr,
+              name = name.toSimpleName
+            ).setRef(f).setType(f.typ.toType).setSourceAst(e)
+          case _ => ???
+        }
+      }
     case _ => ???
   }
   
-  def expr(ctx: Context, e: Ast.Expr): DomExpr = {
+  def expr(ctx: Context, e: Ast.Expr): Seq[JAst.Expr] = {
     val pre = preExpr(ctx, e.pre)
     e.exprs.foreach { _ => ??? }
     pre
   }
   
-  def exprElem(ctx: Context, e: Ast.ExprElem): DomExpr = e match {
+  def exprElem(ctx: Context, e: Ast.ExprElem): Seq[JAst.Expr] = e match {
     case Ast.ExprElemExpr(e) => expr(ctx, e)
     case _ => ???
   }
   
-  def funcCallExpr(ctx: Context, e: Ast.FuncCallExpr): DomExpr = e match {
+  def funcCallExpr(ctx: Context, e: Ast.FuncCallExpr): JAst.Expr = e match {
     case Ast.FuncCallExprPlain(post, params) =>
-      val meth = ast.newMethodInvocation()
-      meth.setSourceAst(e)
-      postExpr(ctx, post) match {
-        case DomExprRef(expr, name) =>
-          meth.setExpression(expr)
-          meth.setName(name)
+      val args = params.exprs.map(exprElem(ctx, _))
+      val meth = postExpr(ctx, post).flatMap {
+        case mr: JAst.ExprMethodRef =>
+          mr.findAppropriateParamSet(args).map { args =>
+            val ast = JAst.MethodInvocation(
+              expr = Some(mr.expr),
+              name = mr.name,
+              args = args
+            ).setSourceAst(e)
+            mr.getRef().map(ast.setRef)
+            ast
+          }
         case _ => ???
       }
-      val args = params.exprs.map {
-        exprElem(ctx, _) match {
-          case DomExprSimple(e) => e
-          case _ => ???
-        }
-      }
-      meth.arguments().addAllRefs(args)
-      DomExprSimple(meth)
+      // TODO: perform ambiguous method check
+      require(!meth.isEmpty)
+      meth.head
     case _ => ???
   }
   
-  def lit(ctx: Context, l: Ast.Lit): DomExpr = l match {
+  def lit(ctx: Context, l: Ast.Lit): JAst.Expr = l match {
     case l: Ast.StringLit => stringLit(ctx, l)
     case _ => ???
   }
   
-  def litExpr(ctx: Context, e: Ast.LitExpr): DomExpr = e match {
+  def litExpr(ctx: Context, e: Ast.LitExpr): JAst.Expr = e match {
     case e: Ast.LitExprLit => litExprLit(ctx, e)
     case _ => ???
   }
   
-  def litExprLit(ctx: Context, e: Ast.LitExprLit): DomExpr = {
+  def litExprLit(ctx: Context, e: Ast.LitExprLit): JAst.Expr = {
     lit(ctx, e.lit)
   }
   
-  def postExpr(ctx: Context, e: Ast.PostExpr): DomExpr = e match {
-    case e: Ast.FuncCallExpr => funcCallExpr(ctx, e)
+  def postExpr(ctx: Context, e: Ast.PostExpr): Seq[JAst.Expr] = e match {
+    case e: Ast.ExplicitMemberExpr => explicitMemberExpr(ctx, e)
+    case e: Ast.FuncCallExpr => Seq(funcCallExpr(ctx, e))
     case e: Ast.PostExprPrim => postExprPrim(ctx, e)
     case _ => ???
   }
   
-  def postExprPrim(ctx: Context, e: Ast.PostExprPrim): DomExpr = {
+  def postExprPrim(ctx: Context, e: Ast.PostExprPrim): Seq[JAst.Expr] = {
     primExpr(ctx, e.expr)
   }
   
-  def preExpr(ctx: Context, e: Ast.PreExpr): DomExpr = e match {
+  def preExpr(ctx: Context, e: Ast.PreExpr): Seq[JAst.Expr] = e match {
     case e: Ast.PreExprOper => preExprOper(ctx, e)
     case _ => ???
   }
   
-  def preExprOper(ctx: Context, e: Ast.PreExprOper): DomExpr = {
-    e.oper.map{o => println("O", o); ???}
+  def preExprOper(ctx: Context, e: Ast.PreExprOper): Seq[JAst.Expr] = {
+    e.oper.map{_ => ???}
     postExpr(ctx, e.expr)
   }
   
-  def primExpr(ctx: Context, e: Ast.PrimExpr): DomExpr = e match {
-    case e: Ast.LitExpr => litExpr(ctx, e)
+  def primExpr(ctx: Context, e: Ast.PrimExpr): Seq[JAst.Expr] = e match {
+    case e: Ast.LitExpr => Seq(litExpr(ctx, e))
     case e: Ast.PrimExprId => primExprId(ctx, e)
     case _ => ???
   }
   
-  def primExprId(ctx: Context, e: Ast.PrimExprId): DomExpr = {
-    // TODO: Make this compile-time configurable
-    if (e.id.name == "println") {
-      val staticRef = ast.newFieldAccess()
-      staticRef.setExpression(ast.newQualifiedName(
-        ast.newName("java.lang"), ast.newSimpleName("System")))
-      staticRef.setName(ast.newSimpleName("out"))
-      DomExprRef(staticRef, ast.newSimpleName("println"))
-    } else ???
-    
+  def primExprId(ctx: Context, e: Ast.PrimExprId): Seq[JAst.Expr] = {
+    // TODO: Make this compile-time configurable to do stdlib lookups
+    // Find the named ref
+    ctx.findRefs(e.id.name).map {
+      case ref: Ref.TypeRef =>
+        (ref.pkgName + '.' + ref.className).toName.
+          setRef(ref).setStaticType(ref.toType).setSourceAst(e)
+      case _ => ???
+    }
   }
   
-  def stmt(ctx: Context, s: Ast.Stmt): dom.Statement = s match {
-    case Ast.ExprStmt(e) => expr(ctx, e) match {
-      case DomExprSimple(expr) =>
-        val stmt = ast.newExpressionStatement(expr)
-        stmt.setSourceAst(s)
-        stmt
-      case _ => ???
-    } 
+  def stmt(ctx: Context, s: Ast.Stmt): JAst.Stmt = s match {
+    case Ast.ExprStmt(e) =>
+      val ex = expr(ctx, e)
+      require(!ex.isEmpty)
+      JAst.ExprStmt(ex.head).setSourceAst(s)
     case Ast.DeclStmt(d) => ???
     case _ => ???
   }
   
-  def stringLit(ctx: Context, l: Ast.StringLit): DomExpr = {
-    val items = l.items.map {
-      textItem(ctx, _) match {
-        case DomExprSimple(e) => e
-        case _ => ???
-      }
-    }
-    if (items.length == 1) DomExprSimple(items.head)
-    else {
-      val concat = items.reduceLeft { (left, right) =>
-        val e = ast.newInfixExpression()
-        e.setLeftOperand(left)
-        e.setRightOperand(right)
-        e.setOperator(dom.InfixExpression.Operator.PLUS)
-        e
-      }
-      DomExprSimple(concat)
+  def stringLit(ctx: Context, l: Ast.StringLit): JAst.Expr = {
+    val items = l.items.map(textItem(ctx, _))
+    if (items.length == 1) items.head
+    else items.reduceLeft { (left, right) =>
+      JAst.InfixExpr(
+        lhs = left,
+        oper = JAst.PlusOper,
+        rhs = right
+      ).setType("java.lang.String".toType)
     }
   }
   
-  def textItem(ctx: Context, t: Ast.TextItem): DomExpr = t match {
+  def textItem(ctx: Context, t: Ast.TextItem): JAst.Expr = t match {
     case Ast.StringText(s) =>
-      val e = ast.newStringLiteral()
-      e.setSourceAst(t)
-      e.setLiteralValue(s)
-      DomExprSimple(e)
+      JAst.StringLit('"' + s + '"').
+        setSourceAst(t).
+        setType("java.lang.String".toType)
     case _ => ???
   }
   
-  def topLevelDecl(ctx: PackageContext, decl: Ast.TopLevelDecl): Unit = {
+  def topLevelDecl(ctx: Context, decl: Ast.TopLevelDecl): Unit = {
     // TODO: extract var and func decls to put at top level
-    //  or maybe just surround the top level decls with "class module" or something
     decl.stmts.map(stmt(ctx, _)).map(ctx.addStatement)
   }
 }

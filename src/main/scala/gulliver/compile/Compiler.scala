@@ -2,6 +2,7 @@ package gulliver.compile
 
 import gulliver.util.Classpath
 import gulliver.parse.Ast
+import gulliver.util.Formatter
 
 object Compiler {
   case class Settings(
@@ -19,7 +20,13 @@ object Compiler {
   def compile(settings: Settings): Result = {
     try {
       val units = Transpiler.transpile(settings)
-      new JdkCompiler(settings.classpath, units.mapValues(_.toString)).compile()
+      // println(Formatter.formatParens(units.toString))
+      val writtenUnits = units.mapValues { unit =>
+        val writer = new JavaWriter
+        writer.compilationUnit(unit)
+        writer.buf.toString
+      }
+      new JdkCompiler(settings.classpath, writtenUnits).compile()
     } finally settings.classpath.close()
   }
 }

@@ -1,7 +1,0 @@
-* Source mapping
-  * Maybe develop source map and do asm-run to replace debug symbols w/ mapped lines/filenames
-  * Maybe use the JDT compiler instead
-* Add more Swift spec and Gulliver-specific spec
-* Utilize JDT/Eclipse search engine to find referenced classes
-* Make API for defining compile-time code generation for standard library stuff
-* Decide whether to target Java 8 and include retrolamda, or do my own Java version target during generation

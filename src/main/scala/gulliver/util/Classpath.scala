@@ -10,6 +10,7 @@ import java.io.InputStream
 import org.objectweb.asm.ClassReader
 import java.io.FileInputStream
 import org.objectweb.asm.FieldVisitor
+import scala.collection.JavaConversions._
 
 object Classpath {
   lazy val JavaRuntimeEntries = Entry.fromClasspath(System.getProperty("sun.boot.class.path"))
@@ -30,6 +31,7 @@ object Classpath {
   
   sealed trait Entry {
     def loadType(fqcn: String): Option[TypeDef]
+    def loadPkgTypeNames(pkg: String): Set[String]
     def close(): Unit = { }
     
     def typeFromStream(is: InputStream): TypeDef = {
@@ -41,6 +43,23 @@ object Classpath {
   
   case class EntryJar(file: File) extends Entry {
     val jarFile = new JarFile(file)
+    
+    lazy val pkgTypeNames: Map[String, Set[String]] = {
+      jarFile.entries().flatMap({ entry =>
+        if (!entry.isDirectory && entry.getName.endsWith(".class")) Some(entry.getName)
+        else None
+      }).toSet.groupBy({ name: String =>
+        name.take(name.lastIndexOf('/')).replace('/', '.')
+      }).mapValues {
+        _.map { name =>
+          name.dropRight(".class".length).drop(name.lastIndexOf('/') + 1)
+        }
+      }
+    }
+    
+    override def loadPkgTypeNames(pkg: String): Set[String] = {
+      pkgTypeNames.getOrElse(pkg, Set.empty)
+    }
     
     override def loadType(fqcn: String): Option[TypeDef] = {
       val path = fqcn.replace('.', '/') + ".class"
@@ -55,20 +74,32 @@ object Classpath {
   }
 
   case class EntryDir(dir: File) extends Entry {
-    override def loadType(fqcn: String): Option[TypeDef] = {
-      val file = new File(dir, fqcn.replace('.', '/') + ".class")
-      if (!file.exists()) None
+    lazy val allTypes = dir.listFiles().flatMap({ file =>
+      if (!file.exists() || file.isDirectory() || !file.getName.endsWith(".class")) None
       else {
         val stream = new FileInputStream(file)
         try Some(typeFromStream(stream))
         finally stream.close()
       }
+    }).toSet
+    
+    override def loadPkgTypeNames(pkg: String): Set[String] = allTypes.collect {
+      case t if t.info.pkgName == pkg => t.info.className
     }
+    
+    override def loadType(fqcn: String): Option[TypeDef] =
+      allTypes.find(_.info.name == fqcn)
   }
   
   // TODO: type params
   case class TypeDef(info: TypeInfo, methods: Map[String, Seq[MethodInfo]], fields: Map[String, FieldInfo])
-  case class TypeInfo(mods: Int, typ: TypeForm.Value, name: String, ext: Option[String], interfaces: Seq[String])
+  case class TypeInfo(mods: Int, typ: TypeForm.Value, name: String,
+      ext: Option[String], interfaces: Seq[String]) {
+    lazy val (pkgName, className) = {
+      val (pkgName, className) = name.splitAt(name.lastIndexOf('.'))
+      pkgName -> className.drop(1)
+    }
+  }
   object TypeForm extends Enumeration {
     val Class, Interface, Enum, Annotation = Value
   }
@@ -89,7 +120,7 @@ object Classpath {
         else if ((access & Opcodes.ACC_ENUM) != 0) TypeForm.Enum
         else if ((access & Opcodes.ACC_INTERFACE) != 0) TypeForm.Interface
         else TypeForm.Class
-      typ = Some(TypeInfo(access, form, name, Option(superName),
+      typ = Some(TypeInfo(access, form, name.replace('/', '.'), Option(superName),
         Option(interfaces).map(_.toSeq).getOrElse(Seq.empty)))
     }
     
@@ -114,13 +145,14 @@ object Classpath {
 class Classpath(entries: Seq[Classpath.Entry]) {
   import Classpath._
   
-  var typeCache = Map.empty[String, Option[TypeDef]]
+  def getType(fqcn: String): Option[TypeDef] = {
+    entries.toStream.flatMap(_.loadType(fqcn)).headOption
+  }
   
-  def loadType(fqcn: String): Option[TypeDef] = typeCache.getOrElse(fqcn, {
-    val typ = entries.toStream.flatMap(_.loadType(fqcn)).headOption
-    typeCache += fqcn -> typ
-    typ
-  })
+  def getPkgTypes(pkg: String): Set[TypeDef] = {
+    entries.map(_.loadPkgTypeNames(pkg)).flatten.
+      flatMap(name => getType(pkg + '.' + name)).toSet
+  }
   
   def close(): Unit = entries.foreach(_.close())
 }

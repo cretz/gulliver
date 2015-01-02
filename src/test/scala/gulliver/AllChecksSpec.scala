@@ -25,10 +25,14 @@ class AllChecksSpec extends GulliverSpec {
     def getSpecFiles(dir: File = specDir): Array[File] = {
       require(dir.isDirectory)
       val files = dir.listFiles
-      files.filter(_.getName.endsWith(".swift")) ++ files.filter(_.isDirectory).flatMap(getSpecFiles _)
+//      files.filter(_.getName.endsWith(".swift")) ++ files.filter(_.isDirectory).flatMap(getSpecFiles _)
+      val ret = files.filter(_.getName.endsWith(".swift")) ++
+        files.filter(_.isDirectory).flatMap(getSpecFiles _)
+      ret.filterNot(_.getAbsolutePath.contains("swift\\"))
     }
+    println(getSpecFiles().toSeq)
     getSpecFiles().foreach { f =>
-      it should "validate " + f.getName in {
+      it should "validate " + f.getAbsolutePath in {
         // Load file and get path relative to spec folder
         val code = {
           val src = Source.fromFile(f)

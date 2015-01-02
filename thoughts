@@ -1,0 +1,224 @@
+TODO:
+* Source mapping
+  * Maybe develop source map and do asm-run to replace debug symbols w/ mapped lines/filenames
+  * Maybe use the JDT compiler instead
+* Add more Swift spec and Gulliver-specific spec
+* Utilize JDT/Eclipse search engine to find referenced classes
+* Make API for defining compile-time code generation for standard library stuff
+* Decide whether to target Java 8 and include retrolamda, or do my own Java version target during generation
+* Setup Travis to execute on multiple JDK versions
+
+Goals:
+* Do not require a runtime library
+* Allow macro-esque code-generation techniques to facilitate the stdlib
+* Follow the Swift syntax, but don't make decisions that would compromise the Java-ness of the generated code, i.e.:
+  * Ignore "unowned" ARC concepts
+  * Protocol extension: blah blah
+  * Support annotations that affect modifiers, e.g. @volatile, @synchronized, etc
+  * Allow both ".gull" and ".swift" file extensions
+* Metadata will be stored in the form of annotations so later the Gulliver compiler can read them. But not like Scala
+  where they used a serialized byte array 
+
+Interop:
+* Standard library additions:
+  * try/catch/finally
+  * synchronized blocks
+* All out-of-class code is in a final class called module in that package. Decls are on the class as static and code
+  is in the static initializer. All modules also contain an empty main.
+* Cases where complex statements must have deferred evaluation (e.g. after an && in an if statement), they become
+  lamdas in Java 8. Or maybe a temporary method of some type in the current scope, not sure.
+* May only target Java 8 at first.
+
+The below is in order by chapter of the Swift guide...
+
+Basics:
+* "let" means final, "var" does not
+* Any reserved Java keyword from Gulliver is appended with a dollar sign on compile.
+* Any reserved Gulliver keyword from Java expects the dev to use backticks.
+* println is an alias to System.out.println
+* Unlike Swift, Int is always Int32...a Java int. Int64 is a long
+* UInt is always UInt32...a Java long. UInt64 is a BigInteger
+* Float and double are as expected
+* Type aliases are compile-time only
+* Tuples:
+  * Will be declared as a final class in the package it is used in (e.g. com.mycompany.Tuple2<A, B>)
+  * Package-specific tuples are type-compatible with each other at compile-time
+  * Tuples with named elements will have a final string literal field for each name (default to null for non-named).
+    Or maybe I'll just make the names as part of compile-time-only metadata
+  * TODO: Maybe I should instead do tuple specializations for each use with a static class based on where in the 
+    code it is at. Then I could access direct fields easier during interop. We'll see
+    * Yup I like this, but I need to have good names..."SomeMethodNameResult" seems like an annoying name
+    * And I also need to make sure all tuples are interoperable via a copyTo method taking a lambda paramn which can be
+      a method reference to the constructor with the same params (e.g. ::new in Java 8)
+* Optionals:
+  * Java primitives are always considered non-optional. Optional primitives in Gulliver becomed boxed
+  * Java variables with a NotNull (or similar) annotation are considered non-optional (configurable)
+  * Java variables with a Nullable (or similar) annotation are considered explicit-optional (configurable)
+  * Java variables with an Optional wrapper are considered explicit-optional (configurable)
+  * All other Java objects are consdiered implicit-optional
+  * Output of null-annotations or optional-wrappers is configurable
+* Assertions become conditionals that throw AssertionError instead of using Java assert facility. Java assert requires
+  enabling at runtime.
+
+Basic Operators:
+* Most things as expected
+* Ranges are specialized Tuple2's when they are passed around, otherwise they are properly inlined in local contexts
+
+Strings and Characters:
+* When possible, iteration over string characters uses charAt as opposed to toCharArray
+* Interpolation just becomes concatenation
+* TODO: string equality with "canonical equivalency". Most likely will only support standard .equals. May investigate
+  using compareTo
+* All strings treated as UTF16 and the utf-8 vs utf-16 is sugar. Scalar views are codepoints?
+
+Collection Types:
+* To avoid complication, collection mutability is a compile-time thing only for now
+  * Maybe when exposed to the outside (i.e. in a getter or just before return), will use Collections.unmodifiable*
+* Arrays are array lists and dictionaries are hash maps
+* TODO: investigate copy-on-write that Swift does. It is not made really clear in the docs
+
+Control Flow:
+* Based on certain parameters, some switch statements will be unrolled to if/else
+* Most things will be easy to model
+
+Functions:
+* Outside of a class, they are statically placed on the "module" class
+* Overloading will have to be tested in my spec, because Apple's doesn't discuss it well
+* External parameter names are compile-time-only constructs (defined by metadata)
+* Default values result in overloads if possible
+* In-out parameters become AtomicReference (or primitive version)
+* In Java 8, method references are easy. But pre-Java 8 we will have to come to some kind of way to make an invocable
+  value
+* Nested functions in Java 8 are lambdas. Not sure about pre-Java 8.
+
+Closures:
+* Java 8 lambdas
+* Use analysis to determine if something is closed over and is not Java 8 "effectively final". Will need to be
+  atomic reference
+
+Enumerations:
+* Will be Java enums but can have static inner classes for the "value".
+* Said inner classes will be as visible as the enum, but will be final to prevent inheritance.
+* Equals and hash code for this class are automatically implemented akin to Scala case classes
+* Raw values are just a final Java field on the enum w/ a getter
+* Enums with raw values will be given a fromRawValue static factory method
+
+Classes and Structures:
+* Structures get free equals+hashCode like Scala case classes
+* Structures are Cloneable...we have to be smart enough to know when to clone in regular use. Actually, we'll just have
+  a copy that does it right since it's clearer and faster.
+* Properties are accessors (see properties below)
+* Structures have default constructors overloaded to handle defaults. The order of constructor parameters is something
+  that has to be figured out to retain BC when fields are rearranged or added later. Explicit initializers trump any
+  default constructor that would cause ambiguity. 
+
+Properties:
+* Always getters/setters, never field access when compiling. This preserves BC.
+* When interop'ing, works with fields first if possible, accessors next. This makes it easier for a dev to choose to
+  use the accessor as a method if so desired.
+* Final properties that have defaults and are set in an initializer will have the default set in the initializer as
+  needed.
+  * Meaning they are not final exactly, but this supports the concept of "two-phase initialization"
+* Need to support disabling of set for structures. Maybe compile-time only.
+* Lazy properties are just null with lazy getter. This means things like @synchronized apply to the getter too.
+* Observers are simply protected methods called before and after set of a setter, i.e. willSet(newValue) and
+  didSet(newValue, oldValue).
+* Global properties are always lazy getters, not final it appears
+* Local property observers are going to have to use internal logic to call the observers
+* Type properties are just statics and static getters/setters
+
+Methods:
+* During interop, there are no external names for parameters. Sorry, can't trust debug symbols will always be present.
+  Maybe we will change this for Java 8 parameters names, but can we trust future releases of a Java library won't just
+  make parameter names disappear?
+* We might as well do -parameters for javac ourselves though, eh?
+* "self" is "this" or the static context
+* Mutating your self in a struct means we need to return the new value somehow in addition. Maybe all mutating funcs
+  should have to return the struct. But how does this play w/ BC if you had a method before and just changed it to
+  mutating? Libraries interoperating w/ the class don't want the method to change. Hrmm...Maybe adding "mutating" is
+  considered a BC-breaking change because in Swift it changes whether you can call it on a let. Or maybe make all
+  mutating methods static w/ an AtomicReference of the struct as the first parameter?
+* Type methods are static methods
+
+Subscripts:
+* "get" and "set". Goes both ways, so really List and Map are natively covered (well, may have to support put for map).
+
+Inheritance:
+* "override" means it gets the Java override annotation
+
+Initialization:
+* What to do about ambiguous overloads that may discriminate based on parameter name only? Need spec tests
+* Most inits, including setting of final fields only in declaring class and a default no-arg constructors, are the same
+* Explicit struct constructors as noted above, or assumed to set all values inline? Likely the former
+* Can convenience initializers work entirely as Java constructors, or do they need to be factories that delegate to the
+  "designated" initializer?
+* Similar Java constructs with regards to how super constructors must be called and when
+* Failable initializers equivalent of static factory methods? If so, how is interop BC affected if normal initializer
+  changes to failable? Considered a BC break in Swift?
+  * Or do we throw something like InstantiationError and treat it as a nil for the resulting optional? Can't use custom
+    exception due to no-runtime-lib rule.
+* Failable inititalizers  for enums (actually, initializers for enums) are gonna need to be factory methods with how
+  Java enums work.
+* "Required initializers" may be "required" in metadata alone only for use by the Gulliver compiler for other Gulliver
+  code
+* Default closures/functions will just be copied to the actual constructor...just a more complicated default
+
+Deinitialization:
+* Use finalize and just know it's when the GC gets around to it as opposed to ARC which calls when refcount 0
+
+Automatic Reference Counting:
+* Does this 100% not apply or should we actually leverage the WeakReference?
+* Unowned references are definitely ignored, they are basically "promise you're cyclically handled"
+* Same approach for unowned/weak captured variables (that would be captured outside the Java lambda)
+
+Optional Chaining:
+* Just turns into many statements checking nil
+
+Type Casting:
+* "as?"" essentially becomes a try w/ a ClassCastException catch
+* "AnyObject" is a type alias to java.lang.Object as far as we're concerned except it's not the supertype of String.
+  primitive wrappers, or lambdas (if the last part is possible)
+* How do I make sure a lambda isn't passed in for AnyObject? Gotta be a compile-time only check
+* "Any" is just the compile-time only supertype of Object and primitives. Would be represented as java.lang.Object
+  which would force primitive wrapping as necessary.
+
+Nested Types:
+* Appear to basically be static inner classes
+
+Extensions:
+* All extensions evaluated at compile time akin to scala implicits
+* Extensions are just put at the package level w/ name like SomethingExtention
+* Is it best to be a class w/ what you're extending as a constructor param (like Scala implicit classes), or static
+  accepting instance like c#?
+* Latter...we need factory methods to be extension initializers
+
+Protocols:
+* Obviously interfaces
+* Type method/property requirements (i.e. static interfaces) will be tough. Compile-time only?
+* TODO: pick up from here
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
