@@ -26,6 +26,7 @@ object Compiler {
         writer.compilationUnit(unit)
         writer.buf.toString
       }
+      println(writtenUnits)
       new JdkCompiler(settings.classpath, writtenUnits).compile()
     } finally settings.classpath.close()
   }

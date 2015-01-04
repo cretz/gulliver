@@ -84,8 +84,8 @@ object JavaModel {
   
   class Pkg(val name: String) {
     var unit = JAst.CompilationUnit(
-      imports = Seq.empty,
       pkg = Some(JAst.PackageDecl(name = name.toName)),
+      imports = Seq.empty,
       types = Seq(
         JAst.TypeDecl(
           name = JAst.SimpleName("module"),
@@ -102,7 +102,10 @@ object JavaModel {
               params = Seq(
                 JAst.SingleVarDecl(
                   name = JAst.SimpleName("args"),
-                  typ = JAst.ArrayType(JAst.SimpleType("java.lang.String".toName))
+                  typ = JAst.ArrayType(
+                    typ = JAst.SimpleType("java.lang.String".toName),
+                    dims = Seq(JAst.Dimension())
+                  )
                 )
               ),
               retType = Some(JAst.PrimitiveType(JAst.VoidPrimitive)),

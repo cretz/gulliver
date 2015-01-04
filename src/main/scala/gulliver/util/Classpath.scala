@@ -13,8 +13,8 @@ import org.objectweb.asm.FieldVisitor
 import scala.collection.JavaConversions._
 
 object Classpath {
-  lazy val JavaRuntimeEntries = Entry.fromClasspath(System.getProperty("sun.boot.class.path"))
-  lazy val Default = new Classpath(JavaRuntimeEntries)
+  def JavaRuntimeEntries = Entry.fromClasspath(System.getProperty("sun.boot.class.path"))
+  def Default = new Classpath(JavaRuntimeEntries)
 
   object Entry {
     def fromClasspath(classpath: String): Seq[Entry] = {

@@ -165,7 +165,7 @@ class Transpiler(val cp: Classpath) {
   
   def textItem(ctx: Context, t: Ast.TextItem): JAst.Expr = t match {
     case Ast.StringText(s) =>
-      JAst.StringLit('"' + s + '"').
+      JAst.StringLit(s).
         setSourceAst(t).
         setType("java.lang.String".toType)
     case _ => ???
