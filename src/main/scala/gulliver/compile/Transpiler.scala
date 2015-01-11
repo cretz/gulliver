@@ -33,8 +33,20 @@ class Transpiler(val cp: Classpath) {
   ///
   
   def binExpr(ctx: Context, lhs: JAst.Expr, e: Ast.BinExpr): JAst.Expr = e match {
+    case e: Ast.BinExprAssign => binExprAssign(ctx, lhs, e)
     case e: Ast.BinExprBin => binExprBin(ctx, lhs, e)
     case _ => ???
+  }
+  
+  def binExprAssign(ctx: Context, lhs: JAst.Expr, e: Ast.BinExprAssign): JAst.Expr = {
+    // We don't set a type on purpose here
+    val expr = preExpr(ctx, e.expr)
+    require(expr.length == 1)
+    JAst.Assignment(
+      lhs = lhs,
+      oper = JAst.NormalAssign,
+      rhs = expr.head
+    )
   }
   
   def binExprBin(ctx: Context, lhs: JAst.Expr, e: Ast.BinExprBin): JAst.Expr = {
@@ -50,6 +62,13 @@ class Transpiler(val cp: Classpath) {
         ).setSourceAst(e).setType(lhs.getType().get)
       case _ => ???
     }
+  }
+  
+  def decimalFloat(ctx: Context, l: Ast.DecimalFloat): JAst.Expr = {
+    require(l.exp.isEmpty)
+    JAst.NumberLit(l.value + l.frac.getOrElse(".0")).
+      setType(JAst.PrimitiveType(JAst.DoublePrimitive)).
+      setSourceAst(l)
   }
   
   def decimalLit(ctx: Context, l: Ast.DecimalLit): JAst.Expr = {
@@ -124,6 +143,11 @@ class Transpiler(val cp: Classpath) {
     JAst.ExprStmt(ex.head).setSourceAst(e)
   }
   
+  def floatLit(ctx: Context, l: Ast.FloatLit): JAst.Expr = l match {
+    case l: Ast.DecimalFloat => decimalFloat(ctx, l)
+    case _ => ???
+  }
+  
   def funcCallExpr(ctx: Context, e: Ast.FuncCallExpr): JAst.Expr = e match {
     case Ast.FuncCallExprPlain(post, params) =>
       val args = params.exprs.map(exprElem(ctx, _))
@@ -154,6 +178,7 @@ class Transpiler(val cp: Classpath) {
   def lit(ctx: Context, l: Ast.Lit): JAst.Expr = l match {
     case l: Ast.StringLit => stringLit(ctx, l)
     case l: Ast.IntLit => intLit(ctx, l)
+    case l: Ast.FloatLit => floatLit(ctx, l)
     case _ => ???
   }
   
@@ -168,17 +193,21 @@ class Transpiler(val cp: Classpath) {
   
   def patternInit(ctx: Context, e: Ast.PatternInit): JAst.VarDeclFragment = {
     // TODO: other patterns
-    val Ast.IdPatt(id, None) = e.patt
+    val Ast.IdPatt(id, typAnn) = e.patt
     val init = e.init.map { i =>
       val res = expr(ctx, i)
       // TODO: multiple expressions?
       require(res.length == 1)
       res.head
     }
-    JAst.VarDeclFragment(
+    val frag = JAst.VarDeclFragment(
       name = id.name.toSimpleName,
       init = init
     )
+    val typ = typAnn.map(typAnn => typeAnn(ctx, typAnn)).
+      orElse(init.flatMap(_.getType())).getOrElse("java.lang.Object".toType)
+    frag.setType(typ)
+    frag
   }
   
   def postExpr(ctx: Context, e: Ast.PostExpr): Seq[JAst.Expr] = e match {
@@ -259,6 +288,25 @@ class Transpiler(val cp: Classpath) {
     decl.stmts.map(stmt(ctx, _)).map(_.map(ctx.addStatement))
   }
   
+  def typ(ctx: Context, t: Ast.Type): JAst.Type = t match {
+    case t: Ast.TypeId => typeId(ctx, t)
+    case _ => ???
+  }
+  
+  def typeAnn(ctx: Context, t: Ast.TypeAnn): JAst.Type = {
+    // TODO
+    require(t.attrs.isEmpty)
+    typ(ctx, t.typ)
+  }
+  
+  def typeId(ctx: Context, t: Ast.TypeId): JAst.Type = {
+    // TODO
+    require(t.gen.isEmpty && t.sub.isEmpty)
+    val refs = ctx.findRefs(t.id.name)
+    require(refs.length == 1 && refs.head.isInstanceOf[Ref.TypeRef])
+    refs.head.asInstanceOf[Ref.TypeRef].toType
+  }
+  
   def varDecl(ctx: Context, e: Ast.VarDecl): Option[JAst.Expr] = e match {
     case e: Ast.VarDeclPatt => varDeclPatt(ctx, e)
     case _ => ???
@@ -270,15 +318,15 @@ class Transpiler(val cp: Classpath) {
     require(e.head.mods.isEmpty)
     e.exprs.foreach { init =>
       val frag = patternInit(ctx, init)
-        ctx.addVarDecl(JAst.VarDeclExpr(
-          typ = frag.init.get.getType().get,
-          fragments = Seq(frag)
-        ))
-        // Also add the named ref
-        ctx.addNamedRef(frag.name.name, Ref.SimpleVarRef(
-          name = frag.name.name,
-          typ = frag.init.get.getType().get
-        ))
+      ctx.addVarDecl(JAst.VarDeclExpr(
+        typ = frag.getType().get,
+        fragments = Seq(frag)
+      ))
+      // Also add the named ref
+      ctx.addNamedRef(frag.name.name, Ref.SimpleVarRef(
+        name = frag.name.name,
+        typ = frag.getType().get
+      ))
     }
     None
   }

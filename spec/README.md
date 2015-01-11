@@ -22,3 +22,4 @@ System.out.println("Hello World")
 Currently the following sections are supported:
 
 * `--OUTPUT--` - The expected stdout output. All \r's are removed.
+* `--COMPILER_ERROR--` - Has no content

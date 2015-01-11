@@ -73,7 +73,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     '\u0300' to '\u036f', '\u1dc0' to '\u1dff', '\u20d0' to '\u20ff', '\ufe20' to '\ufe2f',
     identifierHead
   )
-  def identifierChars = rule { oneOrMore(predicate(identifierChar)) }
+  def identifierChars = rule { zeroOrMore(predicate(identifierChar)) }
   def implicitParameterName = rule { capture('$' ~ decimalDigits) }
 
   // Keywords
@@ -182,10 +182,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
     capture(dotOperatorHead ~ zeroOrMore(dotOperatorChar)) ~> (Oper(_))
   }
   val operatorChar = CharPredicate('/', '=', '-', '+', '!', '*', '%', '<', '>', '&', '|', '^', '~', '?')
-  def binaryOperator = rule {
-    wsReq ~ operator ~ wsReq |
-    noWs ~ operator ~ noWs
-  }
+  def binaryOperator = rule { ws ~ operator ~ ws }
   // TODO: How to tell difference between prefix "." oper and implicit member expression?
   def prefixOperator = rule { !('.' ~ !operatorChar) ~ operator ~ noWs }
   def postfixOperator = rule { noWs ~ operator }
@@ -304,11 +301,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   def binaryExpression: Rule1[BinExpr] = rule {
     ws ~ assignmentOperator ~ ws ~ prefixExpression ~> (BinExprAssign(_)) |
-    conditionalOperator ~ prefixExpression ~> (BinExprCond(_, _)) |
-    binaryOperator ~ prefixExpression ~> (BinExprBin(_, _)) |
+    conditionalOperator ~ ws ~ prefixExpression ~> (BinExprCond(_, _)) |
+    binaryOperator ~ ws ~ prefixExpression ~> (BinExprBin(_, _)) |
     typeCastingOperator ~> (BinExprCast(_))
   }
-  def binaryExpressions = rule { oneOrMore(binaryExpression) }
+  def binaryExpressions = rule { oneOrMore(binaryExpression ~ ws) }
 
   val assignmentOperator = CharPredicate('=')
 
@@ -596,7 +593,7 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
 
   // Module Scope
 
-  def topLevelDeclaration = rule { ws ~ optional(statements) ~ ws ~> (TopLevelDecl(_)) }
+  def topLevelDeclaration = rule { ws ~ optional(statements) ~ ws ~ EOI ~> (TopLevelDecl(_)) }
 
   // Code Blocks
 
@@ -738,7 +735,11 @@ class Parser(val input: ParserInput) extends org.parboiled2.Parser {
       ) |
     optional(attributes) ~ typ ~> (ParamAttr(_: Option[Seq[Attr]], _: Type))
   }
-  def parameterName: Rule1[ParamName] = rule { identifier ~ ws ~> (ParamNameId(_)) | "_" ~ push(ParamNameIgnore) }
+  def parameterName: Rule1[ParamName] = rule {
+    identifier ~ ws ~> { id: Ast.Id =>
+      if (id.name == "_") ParamNameIgnore else ParamNameId(id)
+    }
+  }
   def localParameterName = rule { parameterName }
   def defaultArgumentClause = rule { "=" ~ expression }
 

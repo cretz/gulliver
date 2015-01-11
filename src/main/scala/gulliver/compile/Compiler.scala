@@ -11,7 +11,7 @@ object Compiler {
     input: Map[String, Ast.TopLevelDecl]
   )
   
-  case class CompileError()
+  case class CompileError(msg: String)
   
   case class SourceMap()
   

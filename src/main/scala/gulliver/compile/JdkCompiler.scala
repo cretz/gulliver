@@ -12,6 +12,7 @@ import javax.tools.JavaFileManager.Location
 import javax.tools.FileObject
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
+import javax.tools.DiagnosticCollector
 
 class JdkCompiler(classpath: Classpath, code: Map[String, String]) {
   
@@ -19,18 +20,24 @@ class JdkCompiler(classpath: Classpath, code: Map[String, String]) {
 
   def compile(): Compiler.Result = {
     val compiler = ToolProvider.getSystemJavaCompiler()
+    val diag = new DiagnosticCollector[AnyRef]()
     val fm = new InternalFileManager(compiler.
       getStandardFileManager(null, null, null))
     val cu = code.map { case (k, v) => new StringInputJavaFileObject(k + ".java", v) }
-    val task = compiler.getTask(null, fm, null, null, null, cu.toSeq)
+    val task = compiler.getTask(null, fm, diag, null, null, cu.toSeq)
     task.call()
-    //Map[String, Array[Byte]]
-    val results = out.mapValues { obj =>
-      val bytes = obj.stream.toByteArray()
-      obj.stream.close()
-      bytes
+    val errors = diag.getDiagnostics.map { d =>
+      Compiler.CompileError(d.getMessage(null))
     }
-    Left(results)
+    if (!errors.isEmpty) Right(errors)
+    else {
+      val results = out.mapValues { obj =>
+        val bytes = obj.stream.toByteArray()
+        obj.stream.close()
+        bytes
+      }
+      Left(results)
+    }
   }
   
   class InternalFileManager(f: JavaFileManager)

@@ -78,7 +78,7 @@ object JavaModel {
     override def addVarDecl(decl: JAst.VarDeclExpr): Unit = {
       // Extract part of it to make it a field
       // TODO: multiple
-      require(decl.fragments.length == 1 && decl.fragments.head.init.isDefined)
+      require(decl.fragments.length == 1)
       pkg.addField(JAst.FieldDecl(
         mods = decl.mods + JAst.StaticMod,
         typ = decl.typ,
@@ -87,11 +87,13 @@ object JavaModel {
           dims = decl.fragments.head.dims
         ))
       ))
-      addStatement(JAst.ExprStmt(JAst.Assignment(
-        lhs = decl.fragments.head.name,
-        oper = JAst.NormalAssign,
-        rhs = decl.fragments.head.init.get
-      )))
+      if (decl.fragments.head.init.isDefined) {
+        addStatement(JAst.ExprStmt(JAst.Assignment(
+          lhs = decl.fragments.head.name,
+          oper = JAst.NormalAssign,
+          rhs = decl.fragments.head.init.get
+        )))
+      }
     }
     
     override def addStatement(stmt: JAst.Stmt): Unit = {

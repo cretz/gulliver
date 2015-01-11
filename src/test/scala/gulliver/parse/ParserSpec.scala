@@ -232,6 +232,10 @@ class ParserSpec extends GulliverSpec {
         SetClause(Seq.empty, Some("qux"), ExprStmt(FuncCallExprPlain("quux"))))))
     assertDecl("var foo·:·bar·{·get set·}",
       VarDeclGetSetKey(VarDeclHead(), "foo", "bar", GetSetKeyBlock(GetSetKeyClause(), GetSetKeyClause())))
+    // This was a bug for single-char-named vars
+    assertDecl("var f = bar",
+      VarDeclPatt(VarDeclHead(),
+        Seq(PatternInit(IdPatt("f"), Some("bar")))))
     assertDecl("var foo·:·bar·=·baz·{·willSet·(·qux·)·{·quux·(·)·}·didSet·(·corge·)·{·grault·(·)·}·}",
       VarDeclWillDidSet(VarDeclHead(), "foo", "bar", Some("baz"), WillDidSetBlock(
         WillDidSetClause(Seq.empty, Some("qux"), ExprStmt(FuncCallExprPlain("quux"))),
@@ -360,5 +364,18 @@ class ParserSpec extends GulliverSpec {
     assertPatt("is foo", TypeCastPattIs("foo"))
     assertPatt("foo as bar", TypeCastPattAs(IdPatt("foo"), "bar"))
     assertPatt("foo·+·bar", ExprPatt(Expr("foo", BinExprBin("+", "bar"))))
+  }
+  
+  it should "handle top-level-decl bugs" in {
+    // This is just a placeholder/playground spec...
+    def assertDecl(str: String, result: TopLevelDecl): Unit = {
+      val a = str parsedWith(_.topLevelDeclaration.run())
+      println(gulliver.util.Formatter.formatParens(a.toString))
+      a should be(result)
+    }
+    val str = """
+      // Input failing code here
+    """
+    assertDecl(str, TopLevelDecl(Seq.empty))
   }
 }

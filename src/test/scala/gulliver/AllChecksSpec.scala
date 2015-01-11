@@ -45,32 +45,38 @@ class AllChecksSpec extends GulliverSpec {
         val decls = Parser.parse(Parser.Settings(Map(relativePath -> code))).mapValues(_.get)
         // Get the spec entry info
         val spec = SpecEntry(code)
-        // Compile it
-        val Left(result) = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
-        // Create class loader
-        val loader = new TestClassLoader
-        // Define classes, getting back the static main methods
-        val mainMethods = result.flatMap { case (fileName, bytes) =>
-          val className = fileName.dropRight(".class".length).replace('/', '.')
-          val cls = loader.defineClass(className, bytes)
-          try {
-            val method = cls.getDeclaredMethod("main", classOf[Array[String]])
-            if (Modifier.isStatic(method.getModifiers)) Some(method) else None
-          } catch { case _: NoSuchMethodException => None }
+        // Compile it and check
+        Compiler.compile(Compiler.Settings(Classpath.Default, decls)) match {
+          case Right(errors) => spec.expectsCompilerError should be(true)
+          case Left(classes) =>
+            spec.expectsCompilerError should be(false)
+            Some(runMain(classes)) should be(spec.output)
         }
-        require(mainMethods.size == 1)
-        // Wrap stdout and run
-        val stdout = new ByteArrayOutputStream
-        val previousOut = System.out
-        try {
-          System.setOut(new PrintStream(stdout))
-          mainMethods.head.invoke(null, Array.empty[String])
-        } finally { System.setOut(previousOut) }
-        // Get output string without carriage retruns
-        val actualOutput = new String(stdout.toByteArray).replace("\r", "")
-        // Validate output (remove carriage returns from
-        Some(actualOutput) should be(spec.output)
       }
     }
+  }
+  
+  def runMain(classes: Map[String, Array[Byte]]): String = {
+    // Create class loader
+    val loader = new TestClassLoader
+    // Define classes, getting back the static main methods
+    val mainMethods = classes.flatMap { case (fileName, bytes) =>
+      val className = fileName.dropRight(".class".length).replace('/', '.')
+      val cls = loader.defineClass(className, bytes)
+      try {
+        val method = cls.getDeclaredMethod("main", classOf[Array[String]])
+        if (Modifier.isStatic(method.getModifiers)) Some(method) else None
+      } catch { case _: NoSuchMethodException => None }
+    }
+    require(mainMethods.size == 1)
+    // Wrap stdout and run
+    val stdout = new ByteArrayOutputStream
+    val previousOut = System.out
+    try {
+      System.setOut(new PrintStream(stdout))
+      mainMethods.head.invoke(null, Array.empty[String])
+    } finally { System.setOut(previousOut) }
+    // Get output string without carriage retruns
+    new String(stdout.toByteArray).replace("\r", "")
   }
 }

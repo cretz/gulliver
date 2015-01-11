@@ -8,17 +8,18 @@ object SpecEntry {
   def apply(src: String): SpecEntry = {
     val Success(Ast.MultilineComment(comment)) = new Parser(src).multilineComment.run()
     val commentLines = comment.replace("\r", "").split("\n", -1)
-    val (sections, _) = commentLines.foldLeft(Map.empty[String, String] -> Option.empty[String]) {
+    val (sections, _) = commentLines.foldLeft(Map.empty[String, Seq[String]] -> Option.empty[String]) {
       case ((map, _), line) if line.startsWith("--") && line.endsWith("--") =>
-        map -> Some(line.drop(2).dropRight(2))
+        val newSection = line.drop(2).dropRight(2)
+        (map + (newSection -> Seq.empty)) -> Some(newSection)
       case ((map, Some(sectionTitle)), line) =>
-        val prevSectionString = map.get(sectionTitle).map(_ + '\n').getOrElse("")
-        (map + (sectionTitle -> (prevSectionString + line))) -> Some(sectionTitle)
+        (map + (sectionTitle -> (map(sectionTitle) :+ line))) -> Some(sectionTitle)
       case ((map, None), _) => map -> None
     }
     SpecEntry(sections)
   }
 }
-case class SpecEntry(sections: Map[String, String]) {
-  def output = sections.get("OUTPUT")
+case class SpecEntry(sections: Map[String, Seq[String]]) {
+  def output = sections.get("OUTPUT").map(_.mkString("\n"))
+  def expectsCompilerError = sections.contains("COMPILER_ERROR")
 }
