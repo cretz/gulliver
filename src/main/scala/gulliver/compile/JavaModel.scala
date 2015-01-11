@@ -17,6 +17,10 @@ object JavaModel {
     
     def addStatement(stmt: JAst.Stmt): Unit = parent.addStatement(stmt)
     
+    def addVarDecl(decl: JAst.VarDeclExpr): Unit = {
+      addStatement(JAst.VarDeclStmt(decl.mods, decl.typ, decl.fragments))
+    }
+    
     def classpath: Classpath = parent.classpath
     
     def findRefs(name: String): Seq[Ref] = 
@@ -71,6 +75,25 @@ object JavaModel {
   class FileContext(global: GlobalContext, pkg: Pkg) extends Context {
     override val parentOption = Some(global)
     
+    override def addVarDecl(decl: JAst.VarDeclExpr): Unit = {
+      // Extract part of it to make it a field
+      // TODO: multiple
+      require(decl.fragments.length == 1 && decl.fragments.head.init.isDefined)
+      pkg.addField(JAst.FieldDecl(
+        mods = decl.mods + JAst.StaticMod,
+        typ = decl.typ,
+        fragments = Seq(JAst.VarDeclFragment(
+          name = decl.fragments.head.name,
+          dims = decl.fragments.head.dims
+        ))
+      ))
+      addStatement(JAst.ExprStmt(JAst.Assignment(
+        lhs = decl.fragments.head.name,
+        oper = JAst.NormalAssign,
+        rhs = decl.fragments.head.init.get
+      )))
+    }
+    
     override def addStatement(stmt: JAst.Stmt): Unit = {
       pkg.addStmt(stmt)
     }
@@ -84,20 +107,20 @@ object JavaModel {
   
   class Pkg(val name: String) {
     var unit = JAst.CompilationUnit(
-      pkg = Some(JAst.PackageDecl(name = name.toName)),
+      pkg = Some(JAst.PackageDecl(name = name.toJavaSafeName)),
       imports = Seq.empty,
       types = Seq(
         JAst.TypeDecl(
           name = JAst.SimpleName("module"),
-          mods = Seq(JAst.PublicMod, JAst.FinalMod),
+          mods = Set(JAst.PublicMod, JAst.FinalMod),
           bodyDecls = Seq(
             // Static init (to be updated w/ stmts later)
             JAst.Initializer(
-              mods = Seq(JAst.StaticMod)
+              mods = Set(JAst.StaticMod)
             ),
             // Empty main...
             JAst.MethodDecl(
-              mods = Seq(JAst.PublicMod, JAst.StaticMod),
+              mods = Set(JAst.PublicMod, JAst.StaticMod),
               name = JAst.SimpleName("main"),
               params = Seq(
                 JAst.SingleVarDecl(
@@ -117,6 +140,17 @@ object JavaModel {
     )
     
     // TODO: lenses?
+    
+    def addField(stmt: JAst.FieldDecl): Unit = {
+      val newBodyDecls = unit.types.head.bodyDecls :+ stmt
+      unit = unit.copy(
+        types = unit.types.updated(0,
+          unit.types.head.asInstanceOf[JAst.TypeDecl].copy(
+            bodyDecls = newBodyDecls
+          )
+        )
+      )
+    }
     
     def addStmt(stmt: JAst.Stmt): Unit = {
       val init = unit.types.head.bodyDecls.head.asInstanceOf[JAst.Initializer]
@@ -139,6 +173,20 @@ object JavaModel {
 //    import scala.language.implicitConversions
   
   implicit class PimpedString(str: String) {
+    
+    def toJavaSafeName: JAst.Name = {
+      // TODO: code reuse fail
+      val pieces = str.split('.')
+      pieces.tail.foldLeft(pieces.head.toSimpleName: JAst.Name) {
+        case (name, piece) => JAst.QualifiedName(name, piece.toJavaSafeSimpleName)
+      }
+    }
+    
+    def toJavaSafeSimpleName: JAst.SimpleName = {
+      val newHead = if (Character.isJavaIdentifierStart(str.head)) str.head.toString else ""
+      JAst.SimpleName(newHead + str.drop(1).filter(Character.isJavaIdentifierPart))
+    }
+    
     def toName: JAst.Name = {
       val pieces = str.split('.')
       pieces.tail.foldLeft(pieces.head.toSimpleName: JAst.Name) {

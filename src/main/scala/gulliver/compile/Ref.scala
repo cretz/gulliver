@@ -5,6 +5,8 @@ import gulliver.util.Classpath
 sealed trait Ref
 
 object Ref {
+  import JavaModel._
+  
   case class CompositeRef(refs: Seq[Ref]) extends Ref
   
   sealed trait TypeRef extends Ref {
@@ -24,19 +26,20 @@ object Ref {
   
   sealed trait MethodRef extends Ref {
     def name: String
-    def retType: String
+    def retType: JAst.Type
   }
   case class ClasspathMethodRef(method: Classpath.MethodInfo) extends MethodRef {
     def name = method.name
-    def retType = method.ret.getClassName
+    def retType = method.ret.getClassName.toType
   }
   
   sealed trait FieldRef extends Ref {
     def name: String
-    def typ: String
+    def typ: JAst.Type
   }
   case class ClasspathFieldRef(field: Classpath.FieldInfo) extends FieldRef {
     def name = field.name
-    def typ =  field.typ.getClassName
+    def typ =  field.typ.getClassName.toType
   }
+  case class SimpleVarRef(name: String, typ: JAst.Type) extends FieldRef
 }

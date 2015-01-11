@@ -311,7 +311,7 @@ class JavaWriter(val buf: Appendable = new java.lang.StringBuilder()) {
     append(';')
   }
   
-  def extMods(ast: Seq[ExtMod]) {
+  def extMods(ast: Set[ExtMod]) {
     ast.collect { case a: Annotation => annotation(a); newline }
     ast.collect { case m: Mod => mod(m); append(' ') }
   }
@@ -326,6 +326,7 @@ class JavaWriter(val buf: Appendable = new java.lang.StringBuilder()) {
     typeAst(ast.typ)
     append(' ')
     delimit(ast.fragments)(varDeclFragment)
+    append(';')
   }
   
   def forStmt(ast: ForStmt) {
@@ -720,7 +721,11 @@ class JavaWriter(val buf: Appendable = new java.lang.StringBuilder()) {
       (if (ast.iface) append(" extends ") else append(" implements")),
       ast.ifaces)(typeAst)
     append(" {").indent
-    delimitWithPrefix(newline, ast.bodyDecls, newline.newline)(bodyDecl)
+    // We need to have fields before other things
+    def fieldsFirst(a: BodyDecl, b: BodyDecl) = {
+      a.isInstanceOf[FieldDecl] && !b.isInstanceOf[FieldDecl]
+    }
+    delimitWithPrefix(newline, ast.bodyDecls.sortWith(fieldsFirst), newline.newline)(bodyDecl)
     dedent.newline.append('}')
   }
   

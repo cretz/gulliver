@@ -9,7 +9,7 @@ import scala.collection.JavaConverters._
 object Transpiler {
   def transpile(settings: Compiler.Settings): Map[String, JAst.CompilationUnit] = {
     val transpiler = new Transpiler(settings.classpath)
-    // println(Formatter.formatParens(settings.input.toString))
+    println(Formatter.formatParens(settings.input.toString))
     settings.input.foreach {
       case (file, decl) => transpiler.fromFile(file, decl)
     }
@@ -32,9 +32,60 @@ class Transpiler(val cp: Classpath) {
   
   ///
   
-//  def binExpr(ctx: Context, e: Ast.BinExpr): DomExpr = e match {
-//    case _ => ???
-//  }
+  def binExpr(ctx: Context, lhs: JAst.Expr, e: Ast.BinExpr): JAst.Expr = e match {
+    case e: Ast.BinExprBin => binExprBin(ctx, lhs, e)
+    case _ => ???
+  }
+  
+  def binExprBin(ctx: Context, lhs: JAst.Expr, e: Ast.BinExprBin): JAst.Expr = {
+    e.oper match {
+      case Ast.Oper("+") =>
+        // TODO: union types smarter
+        val rhs = preExpr(ctx, e.expr)
+        require(rhs.length == 1)
+        JAst.InfixExpr(
+          lhs = lhs,
+          oper = JAst.PlusOper,
+          rhs = rhs.head
+        ).setSourceAst(e).setType(lhs.getType().get)
+      case _ => ???
+    }
+  }
+  
+  def decimalLit(ctx: Context, l: Ast.DecimalLit): JAst.Expr = {
+    JAst.NumberLit(l.value).setType(JAst.PrimitiveType(JAst.IntPrimitive)).
+      setSourceAst(l)
+  }
+  
+  def decl(ctx: Context, e: Ast.Decl): Option[JAst.Expr] = e match {
+    // attrs: Seq[Attr], mods: Seq[DeclMod], exprs: Seq[PatternInit]
+    case Ast.ConstDecl(attrs, mods, inits) =>
+      // TODO
+      require(attrs.isEmpty)
+      require(mods.isEmpty)
+      // Go over each pattern init and create var decl stmt
+      inits.foreach { init =>
+        val frag = patternInit(ctx, init)
+        ctx.addVarDecl(JAst.VarDeclExpr(
+          typ = frag.init.get.getType().get,
+          fragments = Seq(frag),
+          mods = Set(JAst.FinalMod)
+        ))
+        // Also add the named ref
+        ctx.addNamedRef(frag.name.name, Ref.SimpleVarRef(
+          name = frag.name.name,
+          typ = frag.init.get.getType().get
+        ))
+      }
+      None
+    case e: Ast.VarDecl => varDecl(ctx, e)
+    case _ => ???
+  }
+  
+  def declStmt(ctx: Context, s: Ast.DeclStmt): Option[JAst.Stmt] = {
+    decl(ctx, s.decl)
+    None
+  }
   
   def explicitMemberExpr(ctx: Context, e: Ast.ExplicitMemberExpr): Seq[JAst.Expr] = e match {
     case Ast.ExplicitMemberExprId(post, Ast.Id(name), None) =>
@@ -45,12 +96,12 @@ class Transpiler(val cp: Classpath) {
             JAst.ExprMethodRef(
               expr = expr,
               name = name.toSimpleName
-            ).setRef(m).setType(m.retType.toType).setSourceAst(e)
+            ).setRef(m).setType(m.retType).setSourceAst(e)
           case f: Ref.FieldRef =>
             JAst.FieldAccess(
               expr = expr,
               name = name.toSimpleName
-            ).setRef(f).setType(f.typ.toType).setSourceAst(e)
+            ).setRef(f).setType(f.typ).setSourceAst(e)
           case _ => ???
         }
       }
@@ -59,13 +110,18 @@ class Transpiler(val cp: Classpath) {
   
   def expr(ctx: Context, e: Ast.Expr): Seq[JAst.Expr] = {
     val pre = preExpr(ctx, e.pre)
-    e.exprs.foreach { _ => ??? }
-    pre
+    Seq(e.exprs.foldLeft(pre.head){ case (lhs, rhs) => binExpr(ctx, lhs, rhs) })
   }
   
   def exprElem(ctx: Context, e: Ast.ExprElem): Seq[JAst.Expr] = e match {
     case Ast.ExprElemExpr(e) => expr(ctx, e)
     case _ => ???
+  }
+  
+  def exprStmt(ctx: Context, e: Ast.ExprStmt): JAst.Stmt = {
+    val ex = expr(ctx, e.expr)
+    require(!ex.isEmpty)
+    JAst.ExprStmt(ex.head).setSourceAst(e)
   }
   
   def funcCallExpr(ctx: Context, e: Ast.FuncCallExpr): JAst.Expr = e match {
@@ -90,8 +146,14 @@ class Transpiler(val cp: Classpath) {
     case _ => ???
   }
   
+  def intLit(ctx: Context, l: Ast.IntLit): JAst.Expr = l match {
+    case l: Ast.DecimalLit => decimalLit(ctx, l)
+    case _ => ???
+  }
+  
   def lit(ctx: Context, l: Ast.Lit): JAst.Expr = l match {
     case l: Ast.StringLit => stringLit(ctx, l)
+    case l: Ast.IntLit => intLit(ctx, l)
     case _ => ???
   }
   
@@ -102,6 +164,21 @@ class Transpiler(val cp: Classpath) {
   
   def litExprLit(ctx: Context, e: Ast.LitExprLit): JAst.Expr = {
     lit(ctx, e.lit)
+  }
+  
+  def patternInit(ctx: Context, e: Ast.PatternInit): JAst.VarDeclFragment = {
+    // TODO: other patterns
+    val Ast.IdPatt(id, None) = e.patt
+    val init = e.init.map { i =>
+      val res = expr(ctx, i)
+      // TODO: multiple expressions?
+      require(res.length == 1)
+      res.head
+    }
+    JAst.VarDeclFragment(
+      name = id.name.toSimpleName,
+      init = init
+    )
   }
   
   def postExpr(ctx: Context, e: Ast.PostExpr): Seq[JAst.Expr] = e match {
@@ -134,20 +211,26 @@ class Transpiler(val cp: Classpath) {
   def primExprId(ctx: Context, e: Ast.PrimExprId): Seq[JAst.Expr] = {
     // TODO: Make this compile-time configurable to do stdlib lookups
     // Find the named ref
-    ctx.findRefs(e.id.name).map {
+    if (e.id.name != "println") ctx.findRefs(e.id.name).map {
       case ref: Ref.TypeRef =>
         (ref.pkgName + '.' + ref.className).toName.
           setRef(ref).setStaticType(ref.toType).setSourceAst(e)
+      case ref: Ref.FieldRef =>
+        ref.name.toSimpleName.setRef(ref).setSourceAst(e).setType(ref.typ)
       case _ => ???
+    } else {
+      Seq(
+        JAst.ExprMethodRef(
+          JAst.FieldAccess("out".toSimpleName, "java.lang.System".toName),
+          "println".toSimpleName
+        )
+      )
     }
   }
   
-  def stmt(ctx: Context, s: Ast.Stmt): JAst.Stmt = s match {
-    case Ast.ExprStmt(e) =>
-      val ex = expr(ctx, e)
-      require(!ex.isEmpty)
-      JAst.ExprStmt(ex.head).setSourceAst(s)
-    case Ast.DeclStmt(d) => ???
+  def stmt(ctx: Context, s: Ast.Stmt): Option[JAst.Stmt] = s match {
+    case s: Ast.ExprStmt => Some(exprStmt(ctx, s))
+    case s: Ast.DeclStmt => declStmt(ctx, s)
     case _ => ???
   }
   
@@ -173,6 +256,30 @@ class Transpiler(val cp: Classpath) {
   
   def topLevelDecl(ctx: Context, decl: Ast.TopLevelDecl): Unit = {
     // TODO: extract var and func decls to put at top level
-    decl.stmts.map(stmt(ctx, _)).map(ctx.addStatement)
+    decl.stmts.map(stmt(ctx, _)).map(_.map(ctx.addStatement))
+  }
+  
+  def varDecl(ctx: Context, e: Ast.VarDecl): Option[JAst.Expr] = e match {
+    case e: Ast.VarDeclPatt => varDeclPatt(ctx, e)
+    case _ => ???
+  }
+  
+  def varDeclPatt(ctx: Context, e: Ast.VarDeclPatt): Option[JAst.Expr] = {
+    // TODO
+    require(e.head.attrs.isEmpty)
+    require(e.head.mods.isEmpty)
+    e.exprs.foreach { init =>
+      val frag = patternInit(ctx, init)
+        ctx.addVarDecl(JAst.VarDeclExpr(
+          typ = frag.init.get.getType().get,
+          fragments = Seq(frag)
+        ))
+        // Also add the named ref
+        ctx.addNamedRef(frag.name.name, Ref.SimpleVarRef(
+          name = frag.name.name,
+          typ = frag.init.get.getType().get
+        ))
+    }
+    None
   }
 }

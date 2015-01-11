@@ -30,20 +30,20 @@ object JAst {
   case class AnonClassDecl(bodyDecls: Seq[BodyDecl]) extends Node
   
   sealed trait BodyDecl extends Node {
-    def mods: Seq[ExtMod]
+    def mods: Set[ExtMod]
   }
   
   sealed trait BaseTypeDecl extends BodyDecl {
     def bodyDecls: Seq[BodyDecl]
     def name: SimpleName
   }
-  case class AnnotationTypeDecl(mods: Seq[ExtMod], bodyDecls: Seq[BodyDecl],
+  case class AnnotationTypeDecl(mods: Set[ExtMod], bodyDecls: Seq[BodyDecl],
     name: SimpleName) extends BaseTypeDecl
-  case class EnumTypeDecl(mods: Seq[ExtMod], bodyDecls: Seq[BodyDecl],
+  case class EnumTypeDecl(mods: Set[ExtMod], bodyDecls: Seq[BodyDecl],
     name: SimpleName, consts: Seq[EnumConstDecl], ifaces: Seq[Type]) extends BaseTypeDecl
   case class TypeDecl(
     name: SimpleName,
-    mods: Seq[ExtMod] = Seq.empty,
+    mods: Set[ExtMod] = Set.empty,
     bodyDecls: Seq[BodyDecl] = Seq.empty,
     parentClass: Option[Type] = None,
     iface: Boolean = false,
@@ -51,23 +51,23 @@ object JAst {
     typeParams: Seq[TypeParam] = Seq.empty
   ) extends BaseTypeDecl
   
-  case class AnnotationTypeMemberDecl(mods: Seq[ExtMod], name: SimpleName,
+  case class AnnotationTypeMemberDecl(mods: Set[ExtMod], name: SimpleName,
     default: Option[Expr], typ: Type) extends BodyDecl
   
-  case class EnumConstDecl(mods: Seq[ExtMod], args: Seq[Expr], anonDecl: Option[AnonClassDecl],
+  case class EnumConstDecl(mods: Set[ExtMod], args: Seq[Expr], anonDecl: Option[AnonClassDecl],
     name: SimpleName) extends BodyDecl
   
-  case class FieldDecl(mods: Seq[ExtMod], fragments: Seq[VarDeclFragment],
+  case class FieldDecl(mods: Set[ExtMod], fragments: Seq[VarDeclFragment],
     typ: Type) extends BodyDecl
   
-  case class Initializer(body: Block = Block(), mods: Seq[ExtMod] = Seq.empty) extends BodyDecl
+  case class Initializer(body: Block = Block(), mods: Set[ExtMod] = Set.empty) extends BodyDecl
   
   case class MethodDecl(
     name: SimpleName,
     params: Seq[SingleVarDecl] = Seq.empty,
     retType: Option[Type] = None,
     body: Option[Block] = None,
-    mods: Seq[ExtMod] = Seq.empty,
+    mods: Set[ExtMod] = Set.empty,
     extraDims: Seq[Dimension] = Seq.empty,
     recQualifier: Option[SimpleName] = None,
     recType: Option[Type] = None,
@@ -215,8 +215,11 @@ object JAst {
   
   case class TypeLit(typ: Type) extends Expr
   
-  case class VarDeclExpr(mods: Seq[ExtMod], typ: Type,
-    fragments: Seq[VarDeclFragment]) extends Expr
+  case class VarDeclExpr(
+    typ: Type,
+    fragments: Seq[VarDeclFragment] = Seq.empty,
+    mods: Set[ExtMod] = Set.empty
+  ) extends Expr
   
   case class ImportDecl(name: Name, static: Boolean, onDemand: Boolean) extends Node
   
@@ -270,7 +273,7 @@ object JAst {
     
   case class TypeDeclStmt(decl: BaseTypeDecl) extends Stmt
   
-  case class VarDeclStmt(mods: Seq[ExtMod], typ: Type,
+  case class VarDeclStmt(mods: Set[ExtMod], typ: Type,
     fragments: Seq[VarDeclFragment]) extends Stmt
     
   case class WhileStmt(expr: Expr, body: Stmt) extends Stmt
@@ -316,7 +319,7 @@ object JAst {
   
   case class UnionType(types: Seq[Type]) extends Type
   
-  case class TypeParam(mods: Seq[ExtMod], name: SimpleName,
+  case class TypeParam(mods: Set[ExtMod], name: SimpleName,
     bounds: Seq[Type]) extends Node
   
   sealed trait VarDecl extends Node {
@@ -328,13 +331,16 @@ object JAst {
   case class SingleVarDecl(
     name: SimpleName,
     typ: Type,
-    mods: Seq[ExtMod] = Seq.empty,
+    mods: Set[ExtMod] = Set.empty,
     varargs: Boolean = false,
     varargsAnns: Seq[Annotation] = Seq.empty,
     dims: Seq[Dimension] = Seq.empty,
     init: Option[Expr] = None
   ) extends VarDecl
     
-  case class VarDeclFragment(name: SimpleName, dims: Seq[Dimension],
-    init: Option[Expr]) extends VarDecl
+  case class VarDeclFragment(
+    name: SimpleName,
+    dims: Seq[Dimension] = Seq.empty,
+    init: Option[Expr] = None
+  ) extends VarDecl
 }

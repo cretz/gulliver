@@ -9,6 +9,7 @@ import org.scalatest._
 import scala.io.Source
 import gulliver.parse.Ast
 import scala.util.Success
+import gulliver.spec.SpecEntry
 
 class AllChecksSpec extends GulliverSpec {
   behavior of "Gulliver language suite"
@@ -42,12 +43,8 @@ class AllChecksSpec extends GulliverSpec {
           replace('\\', '/').dropWhile('/'==_)
         // Parse it
         val decls = Parser.parse(Parser.Settings(Map(relativePath -> code))).mapValues(_.get)
-        // Parse the multiline comment from the top and remove the top line and all
-        //  carriage returns
-        val Success(Ast.MultilineComment(comment)) = new Parser(code).multilineComment.run()
-        val cleanComment = comment.replace("\r", "")
-        require(cleanComment.startsWith("-OUTPUT:") && cleanComment.endsWith("-"))
-        val expectedOutput = cleanComment.drop("-OUTPUT:\n".length).dropRight(1)
+        // Get the spec entry info
+        val spec = SpecEntry(code)
         // Compile it
         val Left(result) = Compiler.compile(Compiler.Settings(Classpath.Default, decls))
         // Create class loader
@@ -72,7 +69,7 @@ class AllChecksSpec extends GulliverSpec {
         // Get output string without carriage retruns
         val actualOutput = new String(stdout.toByteArray).replace("\r", "")
         // Validate output (remove carriage returns from
-        actualOutput should be(expectedOutput)
+        Some(actualOutput) should be(spec.output)
       }
     }
   }
